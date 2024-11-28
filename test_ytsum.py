@@ -344,7 +344,7 @@ def test_get_youtube_subtitles(mocker):
     """
     mock_exists.side_effect = lambda x: "test_path.ru.vtt" in x  # Match exact file
     result = get_youtube_subtitles("test_url", "test_path", "Russian")
-    assert result == "test_path.ru.vtt"
+    assert result == "test_path.ru.txt"  # We return the converted txt file
     assert mock_get_code.called_with("Russian")
     
     # Test 2: Found English subtitles as fallback
@@ -354,7 +354,7 @@ def test_get_youtube_subtitles(mocker):
     """
     mock_exists.side_effect = lambda x: "test_path.en.vtt" in x  # Match exact file
     result = get_youtube_subtitles("test_url", "test_path", "Russian")
-    assert result == "test_path.en.vtt"
+    assert result == "test_path.en.txt"  # We return the converted txt file
     
     # Test 3: No subtitles available
     mock_run.return_value.stdout = "No subtitles available"

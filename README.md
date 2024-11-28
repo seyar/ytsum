@@ -9,13 +9,14 @@ A Python/Shell tool that creates concise, intelligent summaries of YouTube video
 
 - Downloads audio from YouTube videos
 - Multiple transcription options:
-  - YouTube subtitles (when available)
+  - YouTube subtitles (preferred, when available)
   - Local processing:
-    - Fast Whisper (default, fast local processing)
+    - Fast Whisper (default fallback, fast local processing)
   - Cloud options:
     - OpenAI Whisper API (slower but potentially more accurate, pay per minute, 25MB limit)
     - Replicate Incredibly Fast Whisper (fastest cloud option, $0.0070/run)
 - Multi-language support:
+  - YouTube subtitles in original language
   - Transcription in 90+ languages with Replicate
   - Summaries in any language with Claude
 - Token-efficient shorthand conversion
@@ -62,34 +63,35 @@ A Python/Shell tool that creates concise, intelligent summaries of YouTube video
 
 Basic usage with video URL or ID:
 ```bash
-# Using video URL (uses Fast Whisper locally)
+# Using video URL (tries YouTube subtitles first, falls back to Fast Whisper)
 python ytsum.py "https://www.youtube.com/watch?v=VIDEO_ID"
 
-# Using just video ID (uses Fast Whisper locally)
+# Using just video ID
 python ytsum.py VIDEO_ID
 ```
 
 Language options:
 ```bash
-# Default: English summary
+# Default: English subtitles/summary
 python ytsum.py VIDEO_ID
 
-# Non-English summary
+# Non-English subtitles/summary
 python ytsum.py VIDEO_ID --language "Russian"
 
-# Transcribe and summarize in specific language
-python ytsum.py --replicate VIDEO_ID --language "russian"
+# Force specific transcription method (if subtitles unavailable)
+python ytsum.py --whisper VIDEO_ID     # OpenAI Whisper API
+python ytsum.py --replicate VIDEO_ID   # Replicate
 ```
 
-Transcription options:
-```bash
-# Default: Use Fast Whisper (local)
-python ytsum.py VIDEO_ID
+## Transcription Process
 
-# Cloud options:
-python ytsum.py --whisper VIDEO_ID     # OpenAI Whisper API (25MB limit)
-python ytsum.py --replicate VIDEO_ID   # Replicate (no size limit)
-```
+1. First attempts to download YouTube subtitles in requested language
+2. If no subtitles found, falls back to specified transcription method:
+   - Fast Whisper (default, local)
+   - OpenAI Whisper API (if --whisper flag used)
+   - Replicate (if --replicate flag used)
+3. Converts transcript to shorthand format
+4. Generates summary using Claude
 
 ## Language Support
 
@@ -191,7 +193,7 @@ Test:
 .
 ├── ytsum.py      # Python implementation
 ├── ytsum.sh      # Shell implementation
-��── prompt.txt    # Shared prompt for Claude
+├── prompt.txt    # Shared prompt for Claude
 ├── test_ytsum.py # Test suite
 └── README.md
 ```
