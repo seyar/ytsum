@@ -324,29 +324,54 @@ def transcribe_with_openai_whisper(video_path):
         audio_path = video_path
         if input_ext not in supported_formats:
             print_step(EMOJI_TRANSCRIBE, "Converting to supported format...")
-            audio_path = convert_audio_format(video_path, 'm4a')  # Use M4A as default
+            audio_path = convert_audio_format(video_path, 'mp3', bitrate='32k', mono=True)
             if not audio_path:
                 return False
         
         # Check file size (25MB limit)
+        MAX_SIZE_MB = 25
         file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
-        if file_size_mb > 25:
-            print_step(EMOJI_TRANSCRIBE, "File too large, splitting into chunks...")
-            chunk_paths = split_audio_into_chunks(audio_path, chunk_size_mb=20)  # 20MB chunks
-            if not chunk_paths:
+        
+        if file_size_mb > MAX_SIZE_MB:
+            print_step(EMOJI_TRANSCRIBE, f"File too large ({file_size_mb:.1f}MB), optimizing...")
+            
+            # Try aggressive compression first
+            compressed_path = convert_audio_format(audio_path, 'mp3', bitrate='32k', mono=True)
+            if not compressed_path:
                 return False
+            
+            # Check if compression was enough
+            compressed_size_mb = os.path.getsize(compressed_path) / (1024 * 1024)
+            if compressed_size_mb > MAX_SIZE_MB:
+                print_step(EMOJI_TRANSCRIBE, "Still too large, splitting into chunks...")
+                chunk_paths = split_audio_into_chunks(compressed_path, chunk_size_mb=20)
+            else:
+                chunk_paths = [compressed_path]
         else:
             chunk_paths = [audio_path]
+        
+        if not chunk_paths:
+            return False
         
         # Transcribe each chunk
         transcripts = []
         for chunk_path in chunk_paths:
+            # Verify chunk size
+            chunk_size_mb = os.path.getsize(chunk_path) / (1024 * 1024)
+            if chunk_size_mb > MAX_SIZE_MB:
+                print_error(f"Chunk too large: {chunk_size_mb:.1f}MB")
+                continue
+                
             with open(chunk_path, "rb") as audio_file:
                 transcription = client.audio.transcriptions.create(
                     model="whisper-1",
                     file=audio_file
                 )
                 transcripts.append(transcription.text)
+        
+        if not transcripts:
+            print_error("No successful transcriptions")
+            return False
         
         # Combine transcripts
         full_transcript = " ".join(transcripts)
@@ -460,24 +485,27 @@ def get_video_metadata(url):
         print_error(f"Failed to fetch metadata: {e}")
         return ""
 
-def convert_audio_format(input_path, output_format='mp3'):
+def convert_audio_format(input_path, output_format='mp3', bitrate='192k', mono=False):
     """Convert audio to specified format using FFmpeg"""
     try:
-        print_step(EMOJI_TRANSCRIBE, f"Converting audio to {output_format}...")
+        print_step(EMOJI_TRANSCRIBE, f"Converting audio to {output_format} ({bitrate}{'mono' if mono else ''})...")
         output_path = str(Path(input_path).with_suffix(f'.{output_format}'))
         
-        # Run FFmpeg with error output
-        result = subprocess.run([
+        # Build FFmpeg command
+        cmd = [
             'ffmpeg',
             '-i', input_path,
             '-y',  # Overwrite output file if exists
             '-vn',  # No video
             '-acodec', 'libmp3lame' if output_format == 'mp3' else output_format,
             '-ar', '44100',  # Sample rate
-            '-ac', '2',  # Stereo
-            '-b:a', '192k',  # Bitrate
+            '-ac', '1' if mono else '2',  # Mono/Stereo
+            '-b:a', bitrate,  # Bitrate
             output_path
-        ], check=True, capture_output=True, text=True)
+        ]
+        
+        # Run FFmpeg with error output
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
         
         # Verify file exists and is not empty
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:

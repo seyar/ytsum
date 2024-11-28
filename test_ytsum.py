@@ -66,7 +66,7 @@ def test_convert_audio_format(mocker):
     mock_run = mocker.patch("subprocess.run")
     mock_run.return_value.returncode = 0
     
-    # Test MP3 conversion
+    # Test basic MP3 conversion
     result = convert_audio_format("test.m4a", "mp3")
     assert result == "test.mp3"
     
@@ -76,6 +76,20 @@ def test_convert_audio_format(mocker):
     assert args[0] == "ffmpeg"
     assert "-acodec" in args
     assert "libmp3lame" in args
+    assert "-ac" in args
+    assert args[args.index("-ac") + 1] == "2"  # Stereo by default
+    assert "-b:a" in args
+    assert args[args.index("-b:a") + 1] == "192k"  # Default bitrate
+    
+    # Test mono conversion with custom bitrate
+    result = convert_audio_format("test.m4a", "mp3", bitrate="32k", mono=True)
+    assert result == "test.mp3"
+    
+    args = mock_run.call_args[0][0]
+    assert "-ac" in args
+    assert args[args.index("-ac") + 1] == "1"  # Mono
+    assert "-b:a" in args
+    assert args[args.index("-b:a") + 1] == "32k"  # Custom bitrate
 
 def test_get_video_metadata(mocker):
     # Mock yt-dlp JSON output
@@ -205,16 +219,32 @@ def test_split_audio_into_chunks(mocker):
 
 def test_transcribe_with_openai_whisper(mocker):
     # Mock file operations
-    mocker.patch("os.path.getsize", return_value=10 * 1024 * 1024)  # 10MB file
+    file_size_mock = mocker.patch("os.path.getsize")
+    file_size_mock.side_effect = [
+        20 * 1024 * 1024,  # Initial file size for supported format test
+        20 * 1024 * 1024,  # Size check for transcription
+        30 * 1024 * 1024,  # Initial size for unsupported format
+        20 * 1024 * 1024,  # Size after compression
+        20 * 1024 * 1024,  # Size check for transcription
+        30 * 1024 * 1024,  # Initial size for large file test
+        20 * 1024 * 1024,  # Size after compression
+        20 * 1024 * 1024,  # Size check for transcription
+    ]
+    
+    # Mock file paths and operations
     mocker.patch("pathlib.Path.suffix", ".m4a")  # Supported format
+    mocker.patch("os.path.exists", return_value=True)
+    mocker.patch("os.path.dirname", return_value="/tmp")
+    mocker.patch("os.path.join", side_effect=lambda *args: "/".join(args))
+    mocker.patch("os.makedirs")
+    mock_remove = mocker.patch("os.remove")
+    mock_rmdir = mocker.patch("os.rmdir")
     
     # Mock OpenAI client and response
     mock_client = mocker.MagicMock()
     mock_transcription = mocker.MagicMock()
     mock_transcription.text = "test transcript"
     mock_client.audio.transcriptions.create.return_value = mock_transcription
-    
-    # Mock OpenAI client creation
     mock_openai = mocker.patch("openai.OpenAI", return_value=mock_client)
     
     # Mock file operations
@@ -224,28 +254,39 @@ def test_transcribe_with_openai_whisper(mocker):
     # Mock environment variable
     mocker.patch("os.getenv", return_value="test-api-key")
     
-    # Test transcription with supported format
+    # Mock audio conversion
+    mock_convert = mocker.patch("ytsum.convert_audio_format")
+    mock_convert.return_value = "test.mp3"
+    
+    # Test 1: Transcription with supported format
     result = transcribe_with_openai_whisper("test.m4a")
     assert result is True
+    assert not mock_convert.called  # No conversion needed
     
-    # Verify no conversion needed
-    mock_convert = mocker.patch("ytsum.convert_audio_format")
-    assert not mock_convert.called
-    
-    # Test with unsupported format
+    # Test 2: Unsupported format
     mocker.patch("pathlib.Path.suffix", ".aac")
-    mock_convert.return_value = "test.m4a"
     result = transcribe_with_openai_whisper("test.aac")
     assert result is True
     assert mock_convert.called
     
-    # Test with large file
-    mocker.patch("os.path.getsize", return_value=30 * 1024 * 1024)  # 30MB file
-    mock_split = mocker.patch("ytsum.split_audio_into_chunks")
-    mock_split.return_value = ["chunk1.m4a", "chunk2.m4a"]
+    # Verify compression settings
+    args = mock_convert.call_args[1]
+    assert args["bitrate"] == "32k"
+    assert args["mono"] is True
+    
+    # Test 3: Large file that compresses successfully
+    mock_convert.reset_mock()
     result = transcribe_with_openai_whisper("test.m4a")
     assert result is True
-    assert mock_split.called
+    
+    # Verify compression was used
+    assert mock_convert.called
+    assert mock_client.audio.transcriptions.create.called
+    
+    # Verify compression settings
+    args = mock_convert.call_args[1]
+    assert args["bitrate"] == "32k"
+    assert args["mono"] is True
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"]) 
