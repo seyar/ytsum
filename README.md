@@ -1,6 +1,9 @@
-# Awesome Video Summarizer (AI of)
+# Awesome Video Summarizer (AI of course)
 
 A Python/Shell tool that creates concise, intelligent summaries of YouTube videos using AI transcription and Claude 3.5 Sonnet for analysis.
+
+![CleanShot 2024-11-29 at 00 06 15@2x](https://github.com/user-attachments/assets/3ba0dc0e-ceb9-49cc-8484-54b8196af79d)
+![CleanShot 2024-11-29 at 00 13 21@2x](https://github.com/user-attachments/assets/1393f1ad-7e02-4996-a37e-bbf91513c777)
 
 ## Features
 
