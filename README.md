@@ -1,4 +1,4 @@
-# YouTube Video Summarizer
+# Awesome Video Summarizer (AI of course)
 
 A Python/Shell tool that creates concise, intelligent summaries of YouTube videos using AI transcription and Claude 3.5 Sonnet for analysis.
 
