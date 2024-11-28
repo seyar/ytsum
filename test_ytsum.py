@@ -10,7 +10,9 @@ from ytsum import (
     transcribe_with_replicate,
     transcribe_with_openai_whisper,
     process_metadata_description,
-    split_audio_into_chunks
+    split_audio_into_chunks,
+    get_youtube_subtitles,
+    get_language_code
 )
 
 def test_clean_youtube_url():
@@ -287,6 +289,89 @@ def test_transcribe_with_openai_whisper(mocker):
     args = mock_convert.call_args[1]
     assert args["bitrate"] == "32k"
     assert args["mono"] is True
+
+def test_get_language_code(mocker):
+    # Mock Ell response
+    def mock_decorator(*args, **kwargs):
+        def mock_function(func):
+            def wrapper(lang: str):
+                # Simple mapping for testing
+                codes = {
+                    "english": "en",
+                    "russian": "ru",
+                    "spanish": "es",
+                    "invalid": "xyz",  # Should fallback to en
+                }
+                return codes.get(lang.lower(), "en")
+            return wrapper
+        return mock_function
+    
+    # Patch ell.simple
+    mocker.patch("ell.simple", mock_decorator)
+    
+    # Test valid languages
+    assert get_language_code("English") == "en"
+    assert get_language_code("Russian") == "ru"
+    assert get_language_code("Spanish") == "es"
+    
+    # Test fallbacks
+    assert get_language_code("Invalid") == "en"
+    assert get_language_code("") == "en"
+
+def test_get_youtube_subtitles(mocker):
+    # Mock language code conversion
+    mock_get_code = mocker.patch("ytsum.get_language_code")
+    mock_get_code.side_effect = lambda x: {
+        "Russian": "ru",
+        "English": "en"
+    }.get(x, "en")
+    
+    # Mock subprocess for yt-dlp
+    mock_run = mocker.patch("subprocess.run")
+    mock_run.return_value.returncode = 0  # Ensure subprocess succeeds
+    
+    # Mock file existence checks
+    mock_exists = mocker.patch("os.path.exists")
+    
+    # Mock file operations
+    mock_file = mocker.mock_open(read_data="Test subtitles")
+    mocker.patch("builtins.open", mock_file)
+    
+    # Test 1: Found subtitles in requested language
+    mock_run.return_value.stdout = """
+    [info] Writing video subtitles to: test_path.ru.vtt
+    [download] 100% of 15.00KiB
+    """
+    mock_exists.side_effect = lambda x: "test_path.ru.vtt" in x  # Match exact file
+    result = get_youtube_subtitles("test_url", "test_path", "Russian")
+    assert result == "test_path.ru.vtt"
+    assert mock_get_code.called_with("Russian")
+    
+    # Test 2: Found English subtitles as fallback
+    mock_run.return_value.stdout = """
+    [info] Writing video subtitles to: test_path.en.vtt
+    [download] 100% of 15.00KiB
+    """
+    mock_exists.side_effect = lambda x: "test_path.en.vtt" in x  # Match exact file
+    result = get_youtube_subtitles("test_url", "test_path", "Russian")
+    assert result == "test_path.en.vtt"
+    
+    # Test 3: No subtitles available
+    mock_run.return_value.stdout = "No subtitles available"
+    mock_exists.side_effect = lambda x: False  # No files exist
+    result = get_youtube_subtitles("test_url", "test_path", "Russian")
+    assert result is None
+    
+    # Verify yt-dlp was called correctly
+    calls = mock_run.call_args_list
+    assert any("--write-subs" in str(call) for call in calls)
+    assert any("--sub-langs" in str(call) for call in calls)
+    assert any("ru" in str(call) for call in calls)
+    
+    # Verify file existence checks
+    assert mock_exists.call_count >= 2  # At least one check per test
+    assert any("test_path.ru.vtt" in str(call) for call in mock_exists.call_args_list)
+    assert any("test_path.en.vtt" in str(call) for call in mock_exists.call_args_list)
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"]) 

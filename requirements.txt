@@ -1,3 +1,11 @@
 yt-dlp>=2023.11.16
 openai>=1.3.7
 python-dotenv>=1.0.0
+colorama
+anthropic
+ell
+pytube
+# Optional dependencies
+faster-whisper  # For local transcription
+openai          # For OpenAI Whisper API
+replicate       # For Replicate Incredibly Fast Whisper

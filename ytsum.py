@@ -11,6 +11,7 @@ import ell
 from anthropic import Anthropic
 from colorama import init, Fore, Style
 import replicate
+import time
 
 # Initialize colorama
 init()
@@ -145,45 +146,92 @@ def download_video(url, output_path):
         print_error("Failed to download audio")
         return False
 
-def get_youtube_subtitles(url, output_path):
-    """Try to download English subtitles from YouTube"""
+def get_language_code(language_name: str) -> str:
+    """Convert language name to ISO 639-1 code using Claude"""
+    
+    @ell.simple(model="claude-3-5-sonnet-20241022", temperature=0.0, max_tokens=2)
+    def get_code(lang: str) -> str:
+        """You are an expert in language codes. Return only the ISO 639-1 code (2 letters) for the given language name.
+        For example:
+        - English -> en
+        - Russian -> ru
+        - Spanish -> es
+        - Chinese -> zh
+        - Japanese -> ja
+        If unsure, return 'en' as fallback."""
+        return f"Convert this language name to ISO 639-1 code: {lang}. No \`\`\` or \`\`\`python, no intro, no commentaries, only the code."
+    
     try:
-        print_step(EMOJI_SEARCH, "Searching for YouTube subtitles...")
+        code = get_code(language_name).strip().lower()
+        # Validate it's a 2-letter code
+        if len(code) == 2 and code.isalpha():
+            return code
+        return 'en'
+    except:
+        return 'en'
+
+def get_youtube_subtitles(url, output_path, language="en"):
+    """Try to download subtitles from YouTube using yt-dlp"""
+    try:
+        # Convert language name to code
+        language_code = get_language_code(language)
+        print_step(EMOJI_SEARCH, f"Searching for YouTube subtitles in {language} ({language_code})...")
         clean_url = clean_youtube_url(url)
         
-        # First, try auto-generated English subtitles
+        # Try to download subtitles directly with basic command
         result = subprocess.run([
             'yt-dlp',
+            '--write-subs',
+            '--sub-langs', language_code,
             '--skip-download',
-            '--write-auto-sub',
-            '--sub-lang', 'en',
-            '--convert-subs', 'txt',
-            '--output', output_path,
             clean_url
-        ], check=True, capture_output=True, text=True)
+        ], capture_output=True, text=True)
         
-        # If no auto-generated subs, try regular English subtitles
-        if not os.path.exists(output_path + '.en.txt'):
-            result = subprocess.run([
-                'yt-dlp',
-                '--skip-download',
-                '--write-sub',
-                '--sub-lang', 'en',
-                '--convert-subs', 'txt',
-                '--output', output_path,
-                clean_url
-            ], check=True, capture_output=True, text=True)
+        # Look for the downloaded subtitle file in current directory
+        if "Writing video subtitles to:" in result.stdout:
+            # Extract the filename from yt-dlp output
+            for line in result.stdout.splitlines():
+                if "Writing video subtitles to:" in line:
+                    subtitle_file = line.split("Writing video subtitles to:", 1)[1].strip()
+                    if os.path.exists(subtitle_file):
+                        print_success(f"Found subtitles!")
+                        # Convert VTT to plain text
+                        text = convert_vtt_to_text(subtitle_file)
+                        txt_file = subtitle_file.replace('.vtt', '.txt')
+                        with open(txt_file, 'w', encoding='utf-8') as f:
+                            f.write(text)
+                        return txt_file
         
-        # Check if either type of subtitle file exists
-        sub_file = output_path + '.en.txt'
-        if os.path.exists(sub_file):
-            print_success("Found subtitles!")
-            return sub_file
-        
+        print_step(EMOJI_SEARCH, "No subtitles found, will transcribe audio...")
         return None
-    except subprocess.CalledProcessError:
-        print_error("Failed to get subtitles")
+        
+    except Exception as e:
+        print_error(f"Failed to get subtitles: {e}")
         return None
+
+def convert_vtt_to_text(vtt_file):
+    """Convert VTT subtitles to plain text"""
+    text = []
+    with open(vtt_file, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+        
+    # Skip VTT header
+    start = 0
+    for i, line in enumerate(lines):
+        if line.strip() == "WEBVTT":
+            start = i + 1
+            break
+    
+    # Process subtitle content
+    for line in lines[start:]:
+        # Skip timing lines and empty lines
+        if '-->' in line or not line.strip():
+            continue
+        # Add non-empty lines to text
+        if line.strip():
+            text.append(line.strip())
+    
+    return ' '.join(text)
 
 def transcribe_with_fast_whisper(video_path):
     """Transcribe video using Faster Whisper"""
@@ -572,15 +620,29 @@ def main():
     args = parser.parse_args()
     
     # Get video metadata first
-    metadata = get_video_metadata(args.url)
+    try:
+        metadata = get_video_metadata(args.url)
+    except Exception as e:
+        print_error(f"Error processing metadata: {e}")
+        metadata = ""  # Continue without metadata
     
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir = Path(temp_dir)
         audio_path = temp_dir / "audio.m4a"
         base_path = temp_dir / "audio"
         
-        # If specific transcriber chosen, skip YouTube subtitles
-        if args.whisper or args.fast_whisper or args.replicate:
+        # Try YouTube subtitles first (in requested language)
+        subtitle_language = args.language.lower() if args.language else "en"
+        subtitle_file = get_youtube_subtitles(args.url, str(base_path), subtitle_language)
+        
+        if subtitle_file:
+            # Read the subtitle file
+            with open(subtitle_file, 'r', encoding='utf-8') as f:
+                transcript = f.read()
+            # Clean up the downloaded subtitle file
+            os.remove(subtitle_file)
+        elif args.whisper or args.fast_whisper or args.replicate:
+            # Only download and transcribe if no subtitles found
             method = ('Fast Whisper' if args.fast_whisper 
                      else 'OpenAI Whisper' if args.whisper 
                      else 'Incredibly Fast Whisper')
@@ -596,22 +658,15 @@ def main():
                 
             transcript = (temp_dir / "audio.txt").read_text()
         else:
-            # Try YouTube subtitles first
-            print("Attempting to get YouTube subtitles...")
-            subtitle_file = get_youtube_subtitles(args.url, str(base_path))
+            # No subtitles and no specific transcriber, fall back to Fast Whisper
+            print_step(EMOJI_TRANSCRIBE, "No subtitles found, falling back to Fast Whisper transcription...")
+            if not download_video(args.url, str(audio_path)):
+                sys.exit(1)
             
-            if subtitle_file:
-                print("Found YouTube subtitles!")
-                transcript = Path(subtitle_file).read_text()
-            else:
-                print_step(EMOJI_TRANSCRIBE, "No YouTube subtitles found, falling back to Fast Whisper transcription...")
-                if not download_video(args.url, str(audio_path)):
-                    sys.exit(1)
-                
-                if not transcribe_video(str(audio_path), True):  # Default to Fast Whisper
-                    sys.exit(1)
-                
-                transcript = (temp_dir / "audio.txt").read_text()
+            if not transcribe_video(str(audio_path), True):  # Default to Fast Whisper
+                sys.exit(1)
+            
+            transcript = (temp_dir / "audio.txt").read_text()
         
         # Convert to shorthand
         shorthand = to_shorthand(transcript)
