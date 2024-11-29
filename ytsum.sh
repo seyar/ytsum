@@ -4,201 +4,137 @@
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
+NC='\033[0m'
 EMOJI_DOWNLOAD="⬇️ "
 EMOJI_TRANSCRIBE="🎯 "
 EMOJI_SUMMARY="📝 "
 EMOJI_SUCCESS="✅ "
 EMOJI_ERROR="❌ "
 EMOJI_SEARCH="🔍 "
-EMOJI_SAVE="💾 "
 
 # Print functions
-print_step() {
-    echo -e "${BLUE}${1}${2}${NC}"
-}
+print_step() { printf "${BLUE}${2} ${1}${NC}\n"; }
+print_error() { printf "${RED}${EMOJI_ERROR} ${1}${NC}\n"; }
+print_success() { printf "${GREEN}${EMOJI_SUCCESS} ${1}${NC}\n"; }
 
-print_error() {
-    echo -e "${RED}${EMOJI_ERROR} ${1}${NC}"
-}
+# Check dependencies
+command -v yt-dlp >/dev/null 2>&1 || { print_error "yt-dlp is required"; exit 1; }
+command -v ffmpeg >/dev/null 2>&1 || { print_error "ffmpeg is required"; exit 1; }
 
-print_success() {
-    echo -e "${GREEN}${EMOJI_SUCCESS} ${1}${NC}"
-}
+# Check API keys
+[ -z "$ANTHROPIC_API_KEY" ] && { print_error "ANTHROPIC_API_KEY not set"; exit 1; }
 
-# Convert text to shorthand to save tokens
-toShorthand() {
-    local input=$1
-    local shorthand="$input"
+# Parse arguments
+VIDEO_URL=""
+LANGUAGE="english"
+TRANSCRIBER="fast-whisper"
 
-    # Common word replacements
-    declare -A replacements=(
-        ["you"]="u"
-        ["are"]="r"
-        ["see"]="c"
-        ["for"]="4"
-        ["to"]="2"
-        ["too"]="2"
-        ["two"]="2"
-        ["four"]="4"
-        ["be"]="b"
-        ["before"]="b4"
-        ["great"]="gr8"
-        ["thanks"]="thx"
-        ["thank you"]="ty"
-        ["because"]="bc"
-        ["people"]="ppl"
-        ["want"]="wnt"
-        ["love"]="luv"
-        ["okay"]="k"
-        ["yes"]="y"
-        ["no"]="n"
-        ["please"]="plz"
-        ["sorry"]="sry"
-        ["see you"]="cya"
-        ["I am"]="Im"
-        ["good"]="gd"
-        ["right"]="rt"
-        ["later"]="l8r"
-        ["have"]="hv"
-        ["see you later"]="cul8r"
-        ["laughing"]="lol"
-        ["message"]="msg"
-        ["information"]="info"
-        ["about"]="abt"
-        ["awesome"]="awsm"
-        ["quickly"]="quick"
-        ["first"]="1st"
-        ["second"]="2nd"
-        ["third"]="3rd"
-        [" the "]=" "
-        [" a "]=" "
-        ["would"]="wd"
-        ["could"]="cd"
-        ["should"]="shd"
-        ["with"]="w/"
-        ["without"]="w/o"
-        ["through"]="thru"
-        ["think"]="thk"
-        ["something"]="smth"
-        ["someone"]="sm1"
-        ["everyone"]="evry1"
-        ["anyone"]="any1"
-        ["nobody"]="no1"
-        ["tomorrow"]="tmrw"
-        ["tonight"]="2nite"
-        ["today"]="2day"
-        ["yesterday"]="yday"
-        ["please"]="pls"
-        ["probably"]="prob"
-        ["definitely"]="def"
-        ["really"]="rly"
-        ["whatever"]="wtv"
-        ["what"]="wut"
-        ["why"]="y"
-        ["where"]="whr"
-        ["when"]="whn"
-        ["who"]="hu"
-        ["how"]="hw"
-    )
-
-    # Apply replacements
-    for word in "${!replacements[@]}"; do
-        shorthand="${shorthand//$word/${replacements[$word]}}"
-    done
-
-    # Remove extra spaces
-    shorthand=$(echo "$shorthand" | tr -s ' ' | sed 's/^ *//g' | sed 's/ *$//g')
-
-    echo "$shorthand"
-}
-
-# Clean and normalize YouTube URL or video ID
-clean_youtube_url() {
-    local url_or_id="$1"
-    
-    # Check if input is just a video ID
-    if [[ ! "$url_or_id" =~ "youtube.com" ]] && [[ ! "$url_or_id" =~ "youtu.be" ]]; then
-        # Assume it's a video ID, construct full URL
-        echo "https://www.youtube.com/watch?v=$url_or_id"
-        return
-    fi
-    
-    # Extract video ID from full URL
-    local video_id
-    if [[ "$url_or_id" =~ youtu\.be ]]; then
-        video_id=$(echo "$url_or_id" | sed -E 's/.*youtu.be\/([^?]*).*/\1/')
-    else
-        video_id=$(echo "$url_or_id" | sed -E 's/.*[?&]v=([^&]*).*/\1/')
-    fi
-    
-    echo "https://www.youtube.com/watch?v=$video_id"
-}
-
-# Add metadata function
-get_video_metadata() {
-    local url="$1"
-    local clean_url=$(clean_youtube_url "$url")
-    
-    print_step "$EMOJI_SEARCH" "Fetching video metadata..."
-    
-    # Get metadata in JSON format
-    local metadata
-    metadata=$(yt-dlp --dump-json --no-playlist "$clean_url")
-    
-    # Extract and format metadata using jq
-    local title=$(echo "$metadata" | jq -r '.title')
-    local channel=$(echo "$metadata" | jq -r '.channel')
-    local upload_date=$(echo "$metadata" | jq -r '.upload_date')
-    local duration=$(echo "$metadata" | jq -r '.duration_string')
-    local views=$(echo "$metadata" | jq -r '.view_count')
-    local description=$(echo "$metadata" | jq -r '.description')
-    local tags=$(echo "$metadata" | jq -r '.tags | join(", ")')
-    
-    # Create metadata header
-    cat << EOF
----
-Title: $title
-Channel: $channel
-Upload Date: $upload_date
-Duration: $duration
-Views: $views
-Description: |
-    ${description//$'\n'/$$'\n    '}
-Tags: $tags
----
-
-EOF
-}
-
-# Update argument parsing
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --fast-whisper)
-            USE_FAST_WHISPER=1
-            shift
+        --language)
+            LANGUAGE="$2"
+            shift 2
             ;;
         --whisper)
-            USE_WHISPER=1
+            TRANSCRIBER="whisper"
+            shift
+            ;;
+        --replicate)
+            TRANSCRIBER="replicate"
             shift
             ;;
         *)
-            URL="$1"
+            VIDEO_URL="$1"
             shift
             ;;
     esac
 done
 
-# Update transcription logic
-if [ -n "$USE_FAST_WHISPER" ]; then
-    # ... existing Fast Whisper code ...
-elif [ -n "$USE_WHISPER" ]; then
-    # ... existing Whisper code ...
+[ -z "$VIDEO_URL" ] && { print_error "Video URL required"; exit 1; }
+
+# Clean YouTube URL
+clean_url() {
+    local url="$1"
+    if [[ ! "$url" =~ (youtube\.com|youtu\.be) ]]; then
+        url="https://www.youtube.com/watch?v=$url"
+    fi
+    echo "$url"
+}
+
+VIDEO_URL=$(clean_url "$VIDEO_URL")
+
+# Create temp directory
+TEMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TEMP_DIR"' EXIT
+
+# Try to get subtitles first
+print_step "Searching for YouTube subtitles..." "$EMOJI_SEARCH"
+LANG_CODE=$(python3 -c "from ytsum import get_language_code; print(get_language_code('$LANGUAGE'))")
+
+yt-dlp \
+    --write-subs \
+    --sub-langs "$LANG_CODE" \
+    --skip-download \
+    --output "$TEMP_DIR/video" \
+    "$VIDEO_URL"
+
+# Check if subtitles were downloaded
+if [ -f "$TEMP_DIR/video.$LANG_CODE.vtt" ]; then
+    print_success "Found subtitles!"
+    # Convert VTT to plain text
+    sed '1,/^$/d' "$TEMP_DIR/video.$LANG_CODE.vtt" | \
+    sed '/-->/d' | \
+    sed '/^$/d' | \
+    tr '\n' ' ' > "$TEMP_DIR/transcript.txt"
+else
+    print_step "No subtitles found, transcribing audio..." "$EMOJI_SEARCH"
+    
+    # Download audio
+    print_step "Downloading audio..." "$EMOJI_DOWNLOAD"
+    yt-dlp \
+        --extract-audio \
+        --audio-format m4a \
+        --output "$TEMP_DIR/audio.%(ext)s" \
+        "$VIDEO_URL"
+    
+    # Transcribe based on selected method
+    case $TRANSCRIBER in
+        "whisper")
+            [ -z "$OPENAI_API_KEY" ] && { print_error "OPENAI_API_KEY not set"; exit 1; }
+            print_step "Using OpenAI Whisper..." "$EMOJI_TRANSCRIBE"
+            python3 -c "from ytsum import transcribe_with_openai_whisper; transcribe_with_openai_whisper('$TEMP_DIR/audio.m4a')"
+            ;;
+        "replicate")
+            [ -z "$REPLICATE_API_TOKEN" ] && { print_error "REPLICATE_API_TOKEN not set"; exit 1; }
+            print_step "Using Replicate..." "$EMOJI_TRANSCRIBE"
+            python3 -c "from ytsum import transcribe_with_replicate; transcribe_with_replicate('$TEMP_DIR/audio.m4a', '$LANGUAGE')"
+            ;;
+        *)
+            print_step "Using Fast Whisper..." "$EMOJI_TRANSCRIBE"
+            python3 -c "from ytsum import transcribe_with_fast_whisper; transcribe_with_fast_whisper('$TEMP_DIR/audio.m4a')"
+            ;;
+    esac
+    
+    mv "$TEMP_DIR/audio.txt" "$TEMP_DIR/transcript.txt"
 fi
 
 # Get metadata
-METADATA=$(get_video_metadata "$URL")
+print_step "Fetching metadata..." "$EMOJI_SEARCH"
+python3 -c "from ytsum import get_video_metadata; print(get_video_metadata('$VIDEO_URL'))" > "$TEMP_DIR/metadata.txt"
 
-# Save output with metadata
-echo "$METADATA$SUMMARY" > "$OUTPUT_FILE"
+# Convert to shorthand
+print_step "Converting to shorthand..." "$EMOJI_SUMMARY"
+python3 -c "from ytsum import to_shorthand; print(to_shorthand(open('$TEMP_DIR/transcript.txt').read()))" > "$TEMP_DIR/shorthand.txt"
+
+# Generate summary
+print_step "Generating summary..." "$EMOJI_SUMMARY"
+python3 -c "
+from ytsum import summarize_with_claude
+with open('$TEMP_DIR/shorthand.txt') as f:
+    summary = summarize_with_claude(f.read(), '$LANGUAGE')
+print(summary)
+" > "$TEMP_DIR/summary.txt"
+
+# Combine output
+cat "$TEMP_DIR/metadata.txt" "$TEMP_DIR/summary.txt" > "summary-${VIDEO_URL##*=}.txt"
+print_success "Summary saved to summary-${VIDEO_URL##*=}.txt"
