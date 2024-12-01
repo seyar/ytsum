@@ -12,6 +12,9 @@ from anthropic import Anthropic
 from colorama import init, Fore, Style
 import replicate
 import time
+from openai import OpenAI
+import shutil
+import re
 
 # Initialize colorama
 init()
@@ -33,6 +36,29 @@ EMOJI_SUCCESS = "✅ "
 EMOJI_ERROR = "❌ "
 EMOJI_SEARCH = "🔍 "
 EMOJI_SAVE = "💾 "
+EMOJI_PODCAST = "🎙️ "
+EMOJI_AUDIO = "🔊 "
+
+# Add after other constants
+DEFAULT_HOST_VOICES = {
+    "host1": {"voice": "alloy", "name": "Alex"},
+    "host2": {"voice": "nova", "name": "Sarah"}
+}
+
+# Update constants
+AVAILABLE_VOICES = {
+    "alloy": "Neutral voice",
+    "echo": "Male voice",
+    "fable": "Male voice",
+    "onyx": "Male voice",
+    "nova": "Female voice",
+    "shimmer": "Female voice"
+}
+
+# Add after OpenAI client initialization
+# Create output directory if it doesn't exist
+OUTPUT_DIR = Path("out")
+OUTPUT_DIR.mkdir(exist_ok=True)
 
 def print_step(emoji, message, color=Fore.BLUE):
     """Print a step with emoji and color"""
@@ -602,12 +628,173 @@ Tags: [group1], [group2 (item1, item2)], [group3], [group4 (items...)]"""
         print_error(f"Error processing metadata: {e}")
         return metadata
 
+def convert_to_podcast_script(summary, language="english"):
+    """Convert summary to podcast script using Claude"""
+    print_step(EMOJI_PODCAST, f"Converting summary to podcast script in {language}...")
+    
+    @ell.simple(model="claude-3-5-sonnet-20241022", temperature=0.3, max_tokens=4096)
+    def get_podcast(content: str) -> str:
+        return f"""Convert this summary into an engaging podcast script with two hosts.
+Use these voice names directly in the script: ALLOY, ECHO, FABLE, ONYX, NOVA, or SHIMMER.
+
+Rules:
+1. Format each line as: "VOICE_NAME: <dialogue>"
+   Example: "NOVA: That's an interesting point!"
+2. Choose two different voices and use them consistently
+3. Make it conversational but informative
+4. Keep the original language ({language})
+5. Include brief reactions and interactions between hosts
+6. Start with one host introducing the topic
+7. End with the other host wrapping up
+8. Keep the original insights and information
+9. Avoid meta-commentary or introductions
+
+Available voices:
+{json.dumps(AVAILABLE_VOICES, indent=2)}
+
+Summary to convert:
+{content}"""
+    
+    try:
+        return get_podcast(summary)
+    except Exception as e:
+        print_error(f"Error converting to podcast script: {e}")
+        return None
+
+def generate_host_audio(text, host_config, output_path):
+    """Generate audio for a specific host"""
+    try:
+        if not os.getenv("OPENAI_API_KEY"):
+            print_error("OPENAI_API_KEY environment variable not set")
+            return False
+            
+        client = OpenAI()
+        print_step(EMOJI_AUDIO, f"Generating audio for {host_config['name']}...")
+        
+        with client.audio.speech.with_streaming_response.create(
+            model="tts-1",
+            voice=host_config['voice'],
+            input=text
+        ) as response:
+            response.stream_to_file(output_path)
+        return True
+    except Exception as e:
+        print_error(f"Error generating audio: {e}")
+        return False
+
+def combine_audio_files(audio_files, output_file):
+    """Combine multiple audio files with crossfade"""
+    try:
+        if len(audio_files) < 2:
+            print_error("Need at least two audio files to combine.")
+            return False
+
+        # Build input arguments
+        cmd = ['ffmpeg', '-y']
+        for audio_file in audio_files:
+            cmd.extend(['-i', audio_file])
+
+        # Build the filter_complex string
+        filter_parts = []
+        for i in range(len(audio_files)):
+            filter_parts.append(f'[{i}:a]')
+
+        # Initialize the filter chain
+        filter_complex = ''
+
+        # Start with the first two files
+        filter_complex += f'{filter_parts[0]}{filter_parts[1]}'
+
+        # Apply acrossfade between the first two
+        filter_complex += f'acrossfade=d=0.5:c1=tri:c2=tri[a1];'
+
+        # Sequentially chain the rest
+        for i in range(2, len(audio_files)):
+            filter_complex += f'[a{i-1}]{filter_parts[i]}acrossfade=d=0.5:c1=tri:c2=tri[a{i}];'
+
+        # Map the last output
+        final_output = f'[a{len(audio_files)-1}]'
+
+        # Build the final command
+        cmd.extend([
+            '-filter_complex', filter_complex,
+            '-map', final_output,
+            '-ac', '2',
+            '-ar', '44100',
+            str(output_file)
+        ])
+
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        return True
+
+    except subprocess.CalledProcessError as e:
+        print_error(f"Error combining audio files:\n{e.stderr}")
+        return False
+    except Exception as e:
+        print_error(f"Error combining audio files: {e}")
+        return False
+
+def generate_podcast_audio(script, output_file):
+    """Generate podcast audio with detected voices"""
+    temp_files = []
+    voice_configs = {}  # Will store voice configs as we discover them
+    
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Process each line of the script
+            for i, line in enumerate(script.split('\n')):
+                if not line.strip():
+                    continue
+                    
+                # Parse voice and text
+                try:
+                    voice_name, text = line.split(':', 1)
+                    voice_name = voice_name.strip().lower()
+                    text = text.strip()
+                except ValueError:
+                    continue
+                
+                # Skip if not a valid voice
+                if voice_name not in AVAILABLE_VOICES:
+                    continue
+                
+                # Create voice config if not seen before
+                if voice_name not in voice_configs:
+                    voice_configs[voice_name] = {
+                        "voice": voice_name,
+                        "name": voice_name.capitalize()
+                    }
+                
+                # Generate audio for this line
+                temp_file = os.path.join(temp_dir, f"part_{i:03d}.mp3")
+                if generate_host_audio(text, voice_configs[voice_name], temp_file):
+                    temp_files.append(temp_file)
+            
+            # Combine all audio files
+            if temp_files:
+                return combine_audio_files(temp_files, output_file)
+            
+        return False
+    except Exception as e:
+        print_error(f"Error generating podcast: {e}")
+        return False
+
+def sanitize_filename(filename):
+    """Convert URL or video ID to safe filename"""
+    # Remove URL parameters and special characters
+    clean = re.sub(r'[\\/?:*"<>|]', '', filename)
+    # Remove any non-alphanumeric characters except dash and underscore
+    clean = re.sub(r'[^\w\-]', '_', clean)
+    return clean
+
 def main():
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Summarize YouTube videos')
     parser.add_argument('url', help='YouTube video URL or video ID')
     parser.add_argument('--language', default='english',
                        help='Output language for the summary (default: english)')
+    parser.add_argument('--podcast', action='store_true',
+                       help='Generate podcast version with audio')
     
     # Add transcription method group
     trans_group = parser.add_mutually_exclusive_group()
@@ -679,10 +866,32 @@ def main():
         # Combine metadata and summary
         output = metadata + summary
         
-        # Save output
-        output_file = f"summary-{args.url.split('/')[-1]}.txt"
+        # Get video ID for filenames
+        video_id = sanitize_filename(args.url.split('/')[-1])
+        
+        # Update output filenames
+        output_file = OUTPUT_DIR / f"summary-{video_id}.txt"
         Path(output_file).write_text(output)
         print_success(f"Summary saved to {output_file}")
+        
+        # Add after getting summary
+        if args.podcast:
+            # Convert summary to podcast script
+            podcast_script = convert_to_podcast_script(summary, args.language)
+            if not podcast_script:
+                sys.exit(1)
+                
+            # Generate audio file
+            audio_file = OUTPUT_DIR / f"podcast-{video_id}.mp3"
+            if not generate_podcast_audio(podcast_script, audio_file):
+                sys.exit(1)
+            
+            # Save podcast script
+            script_file = OUTPUT_DIR / f"podcast-{video_id}.txt"
+            Path(script_file).write_text(podcast_script)
+            
+            print_success(f"Podcast script saved to {script_file}")
+            print_success(f"Podcast audio saved to {audio_file}")
 
 if __name__ == "__main__":
     main()

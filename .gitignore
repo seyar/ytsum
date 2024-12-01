@@ -1,25 +1,36 @@
-# Summary output files
-summary-*.txt
+*.vtt
+*.mp3
+*.m4a
 
-# macOS system files
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
 
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
+history/
 .pytest_cache/
-.coverage
-htmlcov/
-.env
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
 venv/
-.venv/
+ENV/
 
 # IDE
 .idea/
@@ -27,7 +38,16 @@ venv/
 *.swp
 *.swo
 
-# Test outputs
-test-output/
-.coverage
-coverage.xml 
+# Environment Variables
+.env
+
+# Output Files
+out/
+*.mp3
+*.txt
+!requirements.txt
+!prompt.txt
+!test.txt
+
+# Logs
+*.log 

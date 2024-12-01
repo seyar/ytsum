@@ -1,52 +1,40 @@
-# Awesome Video Summarizer (AI of course)
+# YouTube Summary Tool (ytsum)
 
-A Python/Shell tool that creates concise, intelligent summaries of YouTube videos using AI transcription and Claude 3.5 Sonnet for analysis.
-
-![CleanShot 2024-11-29 at 00 06 15@2x](https://github.com/user-attachments/assets/3ba0dc0e-ceb9-49cc-8484-54b8196af79d)
-![CleanShot 2024-11-29 at 00 13 21@2x](https://github.com/user-attachments/assets/1393f1ad-7e02-4996-a37e-bbf91513c777)
+A command-line tool that creates summaries and podcasts from YouTube videos using AI.
 
 ## Features
 
-- Downloads audio from YouTube videos
-- Multiple transcription options:
-  - YouTube subtitles (preferred, when available)
-  - Local processing:
-    - Fast Whisper (default fallback, fast local processing)
-  - Cloud options:
-    - OpenAI Whisper API (slower but potentially more accurate, pay per minute, 25MB limit)
-    - Replicate Incredibly Fast Whisper (fastest cloud option, $0.0070/run)
-- Multi-language support:
-  - YouTube subtitles in original language
-  - Transcription in 90+ languages with Replicate
-  - Summaries in any language with Claude
-- Token-efficient shorthand conversion
-- AI-powered analysis using Claude 3.5 Sonnet
-- Detailed content breakdown and concise summaries
-- Colorful terminal output with emoji indicators
+- Downloads and transcribes YouTube videos
+- Generates concise summaries using Claude AI
+- Creates podcast versions with OpenAI Text-to-Speech
+- Supports multiple languages
+- Multiple transcription options (Fast Whisper, OpenAI Whisper, Replicate)
+- Automatic subtitle detection and download
+- Combines podcast audio files for seamless playback
 
-## Prerequisites
+## Requirements
 
-- Python 3.11+
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) for YouTube video downloading
-- [FFmpeg](https://ffmpeg.org/) for audio conversion
-- An Anthropic API key for Claude access
-- An OpenAI API key for Whisper transcription (optional)
-- A Replicate API key for Incredibly Fast Whisper (optional)
+- Python 3.8+
+- FFmpeg
+- yt-dlp
+- OpenAI API key (for podcast feature)
+- Anthropic API key (for summaries)
+- Replicate API key (optional, for faster transcription)
 
 ## Installation
 
-1. Clone and setup:
-   ```bash
-   git clone https://github.com/yourusername/youtube-summarizer.git
-   cd youtube-summarizer
-   pip install -r requirements.txt
-   ```
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/youtube-summarizer.git
+cd youtube-summarizer
+pip install -r requirements.txt
+```
 
 2. Set up API keys:
    ```bash
    export ANTHROPIC_API_KEY='your-api-key-here'
-   export OPENAI_API_KEY='your-api-key-here'  # If using OpenAI Whisper
-   export REPLICATE_API_TOKEN='your-api-key-here'  # If using Replicate
+   export OPENAI_API_KEY='your-api-key-here'  # Required for podcast feature
+   export REPLICATE_API_TOKEN='your-api-key-here'  # Optional, for Replicate
    ```
 
 3. Install system dependencies:
@@ -61,146 +49,87 @@ A Python/Shell tool that creates concise, intelligent summaries of YouTube video
 
 ## Usage
 
-Basic usage with video URL or ID:
+### Basic Summary
+
 ```bash
-# Using video URL (tries YouTube subtitles first, falls back to Fast Whisper)
 python ytsum.py "https://www.youtube.com/watch?v=VIDEO_ID"
-
-# Using just video ID
-python ytsum.py VIDEO_ID
 ```
 
-Language options:
+### Generate Podcast
+
 ```bash
-# Default: English subtitles/summary
-python ytsum.py VIDEO_ID
-
-# Non-English subtitles/summary
-python ytsum.py VIDEO_ID --language "Russian"
-
-# Force specific transcription method (if subtitles unavailable)
-python ytsum.py --whisper VIDEO_ID     # OpenAI Whisper API
-python ytsum.py --replicate VIDEO_ID   # Replicate
+python ytsum.py "https://www.youtube.com/watch?v=VIDEO_ID" --podcast
 ```
 
-## Transcription Process
+The script will use two different voices from the following options:
 
-1. First attempts to download YouTube subtitles in requested language
-2. If no subtitles found, falls back to specified transcription method:
-   - Fast Whisper (default, local)
-   - OpenAI Whisper API (if --whisper flag used)
-   - Replicate (if --replicate flag used)
-3. Converts transcript to shorthand format
-4. Generates summary using Claude
+- `alloy`: Neutral voice
+- `echo`: Male voice
+- `fable`: Male voice
+- `onyx`: Male voice
+- `nova`: Female voice
+- `shimmer`: Female voice
 
-## Language Support
-
-### Transcription Languages (Replicate)
-When using `--replicate`, the following languages are supported (must be lowercase):
-- afrikaans, albanian, amharic, arabic, armenian
-- azerbaijani, bashkir, basque, belarusian, bengali
-- bosnian, breton, bulgarian, cantonese, catalan
-- chinese, croatian, czech, danish, dutch, english
-- estonian, faroese, finnish, french, galician
-- georgian, german, greek, gujarati, haitian creole
-- hausa, hawaiian, hebrew, hindi, hungarian
-- icelandic, indonesian, italian, japanese, javanese
-- kannada, kazakh, khmer, korean, lao, latin
-- latvian, lingala, lithuanian, luxembourgish
-- macedonian, malagasy, malay, malayalam, maltese
-- maori, marathi, mongolian, myanmar, nepali
-- norwegian, nynorsk, occitan, pashto, persian
-- polish, portuguese, punjabi, romanian, russian
-- sanskrit, serbian, shona, sindhi, sinhala
-- slovak, slovenian, somali, spanish, sundanese
-- swahili, swedish, tagalog, tajik, tamil
-- tatar, telugu, thai, tibetan, turkish
-- turkmen, ukrainian, urdu, uzbek, vietnamese
-- welsh, yiddish, yoruba
-
-### Summary Languages (Claude)
-The `--language` parameter accepts any language name for the summary output. Claude will:
-1. Analyze the transcript in its original language
-2. Generate a detailed breakdown in English
-3. Translate the final summary into the requested language
-
-## Performance & Costs
-
-| Method | Processing | Speed (150min) | Cost | Size Limit |
-|--------|------------|----------------|------|------------|
-| Fast Whisper | Local | ~9 min | Free | None |
-| OpenAI Whisper | Cloud | ~31 min | Pay per minute | 25MB |
-| Replicate | Cloud | ~2 min | $0.0070/run | None |
-
-Notes:
-- OpenAI Whisper API automatically splits files over 25MB
-- Supported formats: mp3, mp4, mpeg, mpga, m4a, wav, webm
-- Fast Whisper works with any format FFmpeg can handle
-- Replicate works best with MP3 files
-
-## Example Output
-
-Here's an example using a clip from Seinfeld titled "George Starts Thinking About The Future":
+Example podcast script:
 
 ```
-🔍 Searching for YouTube subtitles...
-✅ Found YouTube subtitles!
-📝 Converting to shorthand...
-📝 Generating summary with Claude...
-✅ Summary saved to summary-ggLvk7547_w.txt
+NOVA: Welcome to our summary of this fascinating video!
+ECHO: That's right, Nova. Let's break down the key points...
 ```
 
-The generated summary includes:
-- Detailed breakdown of key moments and themes
-- Important quotes and their significance
-- Main topics discussed
-- Concise 1-2 sentence summary in British English
+### Transcription Methods
 
-## Testing
-
-Run the test suite:
 ```bash
-pytest test_ytsum.py -v
+# Use Fast Whisper (faster, local)
+python ytsum.py "VIDEO_URL" --fast-whisper
+
+# Use OpenAI Whisper (more accurate)
+python ytsum.py "VIDEO_URL" --whisper
+
+# Use Replicate (fastest, requires API key)
+python ytsum.py "VIDEO_URL" --replicate
 ```
 
-The tests cover:
-- URL cleaning and normalization
-- Shorthand text conversion
-- Claude summarization (mocked)
-- Error handling
+### Language Options
+
+```bash
+# Generate summary in Spanish
+python ytsum.py "VIDEO_URL" --language spanish
+
+# Generate podcast in Spanish
+python ytsum.py "VIDEO_URL" --podcast --language spanish
+```
+
+## Output Files
+
+All generated files are saved in the `out/` directory:
+
+- `out/summary-{video_id}.txt`: Text summary of the video
+- `out/podcast-{video_id}.txt`: Podcast script (when using `--podcast`)
+- `out/podcast-{video_id}.mp3`: Audio podcast file (when using `--podcast`)
+
+The output directory is automatically created if it doesn't exist.
 
 ## Dependencies
 
-Core:
-- yt-dlp: YouTube video downloading
-- anthropic: Claude AI access
-- ell: Claude API wrapper
-- colorama: Colored terminal output
+- `yt-dlp`: For downloading YouTube videos
+- `ffmpeg`: For audio processing
+- `openai`: For Whisper API and text-to-speech
+- `anthropic`: For Claude AI summaries
+- `replicate`: For cloud transcription
+- `colorama`: For colored terminal output
+- `ell`: For AI model management
 
-Optional:
-- faster-whisper: Fast transcription option
-- openai-whisper: Alternative transcription option
-- replicate: Replicate Incredibly Fast Whisper
+## Notes on Audio Processing
 
-Test:
-- pytest: Testing framework
-- pytest-asyncio: Async test support
-- pytest-mock: Mocking support
-
-## Project Structure
-
-```
-.
-├── ytsum.py      # Python implementation
-├── ytsum.sh      # Shell implementation
-├── prompt.txt    # Shared prompt for Claude
-├── test_ytsum.py # Test suite
-└── README.md
-```
+- The script combines audio files without crossfade for better compatibility.
+- All audio files are converted to a consistent format to ensure proper concatenation.
+- FFmpeg's `concat` demuxer is used for combining audio files.
 
 ## Error Handling
 
 The tool includes comprehensive error handling for:
+
 - Failed video downloads
 - Missing subtitles
 - Transcription errors
@@ -211,6 +140,7 @@ The tool includes comprehensive error handling for:
 ## Development
 
 When contributing, please:
+
 1. Add tests for new functionality
 2. Ensure all tests pass
 3. Follow the existing code style
@@ -222,26 +152,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Optional Dependencies
-
-```bash
-# Local transcription (default):
-pip install faster-whisper
-
-# Cloud transcription:
-pip install openai      # For OpenAI Whisper API
-pip install replicate   # For Replicate
-```
-
-## API Keys
-
-```bash
-# Required:
-export ANTHROPIC_API_KEY='your-key'  # For Claude summaries
-
-# Optional (for cloud transcription):
-export OPENAI_API_KEY='your-key'     # For OpenAI Whisper
-export REPLICATE_API_TOKEN='your-key' # For Replicate
-```
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
