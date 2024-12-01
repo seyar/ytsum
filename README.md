@@ -1,155 +1,156 @@
-# YouTube Summary Tool (ytsum)
+# YT Summary
 
-A command-line tool that creates summaries and podcasts from YouTube videos using AI.
+A Python tool to generate summaries, podcasts, and videos from YouTube content.
 
 ## Features
 
-- Downloads and transcribes YouTube videos
-- Generates concise summaries using Claude AI
-- Creates podcast versions with OpenAI Text-to-Speech
-- Supports multiple languages
-- Multiple transcription options (Fast Whisper, OpenAI Whisper, Replicate)
-- Automatic subtitle detection and download
-- Combines podcast audio files for seamless playback
-
-## Requirements
-
-- Python 3.8+
-- FFmpeg
-- yt-dlp
-- OpenAI API key (for podcast feature)
-- Anthropic API key (for summaries)
-- Replicate API key (optional, for faster transcription)
+- Generate concise summaries of YouTube videos
+- Create engaging podcast scripts with multiple voices
+- Generate AI-powered videos with synchronized podcast audio
+- Support for multiple languages
+- Multiple transcription options
+- Multiple video generation providers
 
 ## Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/youtube-summarizer.git
-cd youtube-summarizer
+git clone https://github.com/yourusername/ytsum.git
+cd ytsum
+```
+
+2. Install dependencies:
+```bash
 pip install -r requirements.txt
 ```
 
-2. Set up API keys:
-   ```bash
-   export ANTHROPIC_API_KEY='your-api-key-here'
-   export OPENAI_API_KEY='your-api-key-here'  # Required for podcast feature
-   export REPLICATE_API_TOKEN='your-api-key-here'  # Optional, for Replicate
-   ```
+3. Install FFmpeg (required for audio/video processing):
+   - macOS: `brew install ffmpeg`
+   - Ubuntu/Debian: `sudo apt-get install ffmpeg`
+   - Windows: Download from [FFmpeg website](https://ffmpeg.org/download.html)
 
-3. Install system dependencies:
-   ```bash
-   # macOS
-   brew install ffmpeg yt-dlp
+## Environment Setup
 
-   # Ubuntu/Debian
-   sudo apt-get install ffmpeg
-   pip install yt-dlp
-   ```
+Create a `.env` file with your API keys:
+```
+ANTHROPIC_API_KEY=your_claude_api_key
+OPENAI_API_KEY=your_openai_api_key
+LUMAAI_API_KEY=your_lumaai_api_key
+RUNWAYML_API_SECRET=your_runwayml_api_key
+REPLICATE_API_TOKEN=your_replicate_api_key
+```
 
 ## Usage
 
 ### Basic Summary
-
 ```bash
 python ytsum.py "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
 ### Generate Podcast
-
 ```bash
-python ytsum.py "https://www.youtube.com/watch?v=VIDEO_ID" --podcast
+python ytsum.py --podcast "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
-The script will use two different voices from the following options:
-
-- `alloy`: Neutral voice
-- `echo`: Male voice
-- `fable`: Male voice
-- `onyx`: Male voice
-- `nova`: Female voice
-- `shimmer`: Female voice
-
-Example podcast script:
-
-```
-NOVA: Welcome to our summary of this fascinating video!
-ECHO: That's right, Nova. Let's break down the key points...
-```
-
-### Transcription Methods
-
+### Generate Video with Podcast
 ```bash
-# Use Fast Whisper (faster, local)
-python ytsum.py "VIDEO_URL" --fast-whisper
+# Using Luma AI (faster, recommended)
+python ytsum.py --podcast --lumaai "https://www.youtube.com/watch?v=VIDEO_ID"
 
-# Use OpenAI Whisper (more accurate)
-python ytsum.py "VIDEO_URL" --whisper
-
-# Use Replicate (fastest, requires API key)
-python ytsum.py "VIDEO_URL" --replicate
+# Using RunwayML
+python ytsum.py --podcast --runwayml "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
-### Language Options
-
-```bash
-# Generate summary in Spanish
-python ytsum.py "VIDEO_URL" --language spanish
-
-# Generate podcast in Spanish
-python ytsum.py "VIDEO_URL" --podcast --language spanish
-```
+### Additional Options
+- `--language`: Specify output language (default: english)
+- `--ignore-subs`: Force transcription even when subtitles exist
+- `--fast-whisper`: Use Fast Whisper for transcription (faster)
+- `--whisper`: Use OpenAI Whisper for transcription (more accurate)
+- `--replicate`: Use Replicate's Incredibly Fast Whisper
 
 ## Output Files
 
-All generated files are saved in the `out/` directory:
+All output files are saved in the `out` directory:
+- `summary-{video_id}.txt`: Text summary
+- `podcast-{video_id}.txt`: Podcast script
+- `podcast-{video_id}.mp3`: Podcast audio
+- `video-{video_id}.mp4`: Final video with podcast audio
 
-- `out/summary-{video_id}.txt`: Text summary of the video
-- `out/podcast-{video_id}.txt`: Podcast script (when using `--podcast`)
-- `out/podcast-{video_id}.mp3`: Audio podcast file (when using `--podcast`)
+## Video Generation
 
-The output directory is automatically created if it doesn't exist.
+The tool supports two AI video generation providers:
+
+### Luma AI (Recommended)
+- Faster generation times
+- High-quality cinematic videos
+- Supports camera movements and scene transitions
+- Maintains visual consistency
+- Optional image input for style reference
+
+### RunwayML
+- High-quality video generation
+- Requires input image
+- Longer processing times
+- Professional-grade output
+
+Both providers:
+1. Generate base images using Flux AI
+2. Create video segments based on podcast content
+3. Combine segments with audio
+4. Support custom duration and aspect ratio
+
+## Transcription Options
+
+1. Fast Whisper (Default)
+   - Quick transcription
+   - Good accuracy
+   - No API key required
+
+2. OpenAI Whisper
+   - High accuracy
+   - Slower processing
+   - Requires OpenAI API key
+
+3. Replicate Whisper
+   - Fastest option
+   - Good accuracy
+   - Requires Replicate API key
+
+## Testing
+
+Run the test suite:
+```bash
+python test_ytsum.py
+```
+
+Run specific test groups:
+```bash
+# Run Luma AI tests only
+pytest -v -m luma
+
+# Run RunwayML tests only
+pytest -v -m runway
+```
 
 ## Dependencies
 
-- `yt-dlp`: For downloading YouTube videos
-- `ffmpeg`: For audio processing
-- `openai`: For Whisper API and text-to-speech
-- `anthropic`: For Claude AI summaries
-- `replicate`: For cloud transcription
-- `colorama`: For colored terminal output
-- `ell`: For AI model management
-
-## Notes on Audio Processing
-
-- The script combines audio files without crossfade for better compatibility.
-- All audio files are converted to a consistent format to ensure proper concatenation.
-- FFmpeg's `concat` demuxer is used for combining audio files.
-
-## Error Handling
-
-The tool includes comprehensive error handling for:
-
-- Failed video downloads
-- Missing subtitles
-- Transcription errors
-- API issues
-- Missing dependencies
-- File system operations
-
-## Development
-
-When contributing, please:
-
-1. Add tests for new functionality
-2. Ensure all tests pass
-3. Follow the existing code style
-4. Update documentation as needed
+- `anthropic`: Claude API for text generation
+- `openai`: Whisper API for transcription and TTS
+- `lumaai`: Luma AI for video generation (recommended)
+- `runwayml`: RunwayML for video generation
+- `replicate`: Flux AI for image generation
+- `ffmpeg-python`: Audio/video processing
+- `colorama`: Terminal output formatting
+- `pytest`: Testing framework
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the LICENSE file for details.

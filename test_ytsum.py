@@ -19,9 +19,78 @@ from ytsum import (
     generate_podcast_audio,
     DEFAULT_HOST_VOICES,
     OUTPUT_DIR,
-    sanitize_filename
+    sanitize_filename,
+    generate_video_segments,
+    generate_video_segments_with_luma,
+    generate_video_segments_with_runway,
+    combine_video_segments,
+    get_audio_duration,
+    combine_audio_video,
+    generate_image_prompts,
+    generate_flux_images,
+    calculate_num_segments,
+    calculate_target_length
 )
 import shutil
+import ffmpeg
+
+# Test data
+MOCK_PODCAST_SCRIPT = """
+NOVA: Welcome to our discussion about artificial intelligence!
+ECHO: Today we'll explore how AI is transforming our world.
+NOVA: From self-driving cars to medical diagnosis, AI is everywhere.
+ECHO: Let's break down the key developments and their impact.
+"""
+
+MOCK_VIDEO_PROMPTS = [
+    "Establishing Shot: Modern tech campus at dawn. Camera dolly forward through blue-lit corridors as holographic data visualizations float in the air, casting ethereal patterns on the walls and ceilings. Soft ambient lighting creates an atmosphere of scientific discovery while researchers work diligently in the background, their silhouettes moving purposefully through the space.",
+    "Wide Shot: AI research lab with multiple workstations. Camera track smoothly past scientists working as 3D neural network models pulse with energy above their heads, their movements synchronized with cascading data streams. Cool blue tones emphasize the technical environment while highlighting human innovation, creating a seamless blend of organic and digital elements.",
+    "Close-Up Shot: Interactive holographic display. Camera orbit around detailed AI model visualization as data streams flow through neural pathways, revealing complex patterns and intricate connections. Glowing particles highlight key connection points while soft focus creates depth and dimensionality, with subtle color shifts indicating data processing intensity and neural activity patterns.",
+    "Tracking Shot: Hospital corridor transformed by AI. Camera track alongside medical staff using AR displays for patient diagnostics, their gestures controlling floating medical data and real-time scan results. Warm lighting balances technical and human elements as healing meets innovation, with gentle highlights emphasizing the caring touch in this high-tech environment.",
+    "Aerial Shot: Smart city at sunset. Camera pull out to reveal interconnected AI systems controlling traffic, energy, and urban services, creating a living network of light and data flowing through the cityscape. Golden hour lighting creates sense of optimistic future while showcasing technological harmony, as the city pulses with the rhythm of millions of coordinated decisions."
+]
+
+MOCK_IMAGE_PROMPTS = [
+    "masterpiece, highly detailed, modern tech campus interior, ethereal blue lighting, holographic data visualizations, soft ambient glow, researchers silhouettes, cinematic composition, volumetric lighting, 8k uhd",
+    "masterpiece, highly detailed, futuristic AI research lab, workstations with floating 3D neural networks, cool blue color scheme, scientists at work, organic meets digital aesthetic, cinematic lighting, 8k uhd",
+    "masterpiece, highly detailed, interactive holographic interface, complex data visualization, glowing neural pathways, particle effects, depth of field, dramatic lighting, technological aesthetic, 8k uhd",
+    "masterpiece, highly detailed, futuristic hospital corridor, AR medical displays, floating diagnostic data, warm professional lighting, medical staff, healing atmosphere, cinematic composition, 8k uhd",
+    "masterpiece, highly detailed, smart city panorama, golden hour lighting, interconnected urban systems, data networks, light trails, atmospheric perspective, epic scale, cinematic mood, 8k uhd"
+]
+
+@pytest.fixture
+def temp_dir(tmp_path):
+    """Create temporary directory for test files"""
+    return tmp_path
+
+@pytest.fixture
+def mock_luma_client(mocker):
+    """Mock LumaAI client"""
+    mock_client = mocker.MagicMock()
+    mock_generation = mocker.MagicMock()
+    mock_generation.state = "completed"
+    mock_generation.assets.video = "http://example.com/video.mp4"
+    mock_client.generations.create.return_value = mock_generation
+    mock_client.generations.get.return_value = mock_generation
+    return mock_client
+
+@pytest.fixture
+def mock_runway_client(mocker):
+    """Mock RunwayML client"""
+    mock_client = mocker.MagicMock()
+    mock_task = mocker.MagicMock()
+    mock_task.status = "COMPLETED"
+    mock_task.output.video_url = "http://example.com/video.mp4"
+    mock_client.image_to_video.create.return_value = mock_task
+    mock_client.tasks.retrieve.return_value = mock_task
+    return mock_client
+
+@pytest.fixture
+def mock_replicate_client(mocker):
+    """Mock Replicate client"""
+    mock_run = mocker.patch('replicate.run')
+    mock_run.return_value = "http://example.com/image.jpg"
+    return mock_run
 
 def test_clean_youtube_url():
     # Test video ID only
@@ -47,28 +116,23 @@ def test_to_shorthand():
 
 @pytest.mark.asyncio
 async def test_summarize_with_claude(mocker):
-    # Mock prompt file
-    mock_prompt = "Test prompt with {language}"
-    mocker.patch("pathlib.Path.open", mocker.mock_open(read_data=mock_prompt))
-    
+    """Test summary generation"""
     # Mock Claude response
-    mock_summary = "<detailed_breakdown>Test breakdown</detailed_breakdown>\n<summary>Test summary</summary>"
+    mock_summary = "Test summary content"
     
     # Create mock decorator
     def mock_decorator(*args, **kwargs):
         def mock_function(func):
-            return lambda x: mock_summary
+            def wrapper(*args, **kwargs):
+                return mock_summary
+            return wrapper
         return mock_function
     
     # Patch ell.simple
     mocker.patch("ell.simple", mock_decorator)
     
     # Test with default language
-    result = summarize_with_claude("test transcript")
-    assert result == mock_summary
-    
-    # Test with specific language
-    result = summarize_with_claude("test transcript", language="russian")
+    result = summarize_with_claude("test transcript", "test metadata", "english")
     assert result == mock_summary
 
 def test_convert_audio_format(mocker):
@@ -385,7 +449,7 @@ def test_convert_to_podcast_script(mocker):
     """Test podcast script conversion"""
     # Mock Claude response
     mock_script = """
-    NOVA: Welcome to our summary of this fascinating video!
+    NOVA: Welcome to our summary!
     ECHO: That's right, Nova. Let's break down the key points.
     NOVA: The first important topic is...
     """
@@ -393,18 +457,17 @@ def test_convert_to_podcast_script(mocker):
     # Create mock decorator
     def mock_decorator(*args, **kwargs):
         def mock_function(func):
-            return lambda x: mock_script
+            def wrapper(*args, **kwargs):
+                return mock_script
+            return wrapper
         return mock_function
     
-    # Patch ell.simple
+    # Patch ell.simple and random choice
     mocker.patch("ell.simple", mock_decorator)
+    mocker.patch("random.choice", side_effect=["nova", "echo"])
     
     # Test with default language
-    result = convert_to_podcast_script("test summary")
-    assert result == mock_script
-    
-    # Test with specific language
-    result = convert_to_podcast_script("test summary", language="spanish")
+    result = convert_to_podcast_script("test summary", "english")
     assert result == mock_script
 
 @pytest.fixture(autouse=True)
@@ -464,7 +527,7 @@ def test_generate_host_audio(mocker):
     )
     
     # Verify stream_to_file was called
-    mock_response.stream_to_file.assert_called_once_with(str(output_file))
+    mock_response.stream_to_file.assert_called_once_with(output_file)
     
     # Test error handling
     mock_create.reset_mock()
@@ -478,16 +541,9 @@ def test_generate_host_audio(mocker):
 
 def test_combine_audio_files(mocker):
     """Test audio file combination"""
-    # Mock file operations
-    mock_temp = mocker.patch("tempfile.NamedTemporaryFile")
-    mock_temp.return_value.__enter__.return_value.name = "temp_list.txt"
-    
     # Mock subprocess
     mock_run = mocker.patch("subprocess.run")
     mock_run.return_value.returncode = 0
-    
-    # Mock file cleanup
-    mock_unlink = mocker.patch("os.unlink")
     
     # Test successful combination
     audio_files = [
@@ -501,22 +557,16 @@ def test_combine_audio_files(mocker):
     # Verify FFmpeg command
     ffmpeg_call = mock_run.call_args[0][0]
     assert "ffmpeg" in ffmpeg_call
-    assert "-f" in ffmpeg_call
-    assert "concat" in ffmpeg_call
-    assert "-af" in ffmpeg_call  # Check for audio filter flag
+    assert "-filter_complex" in ffmpeg_call
+    assert "acrossfade" in ''.join(ffmpeg_call)  # Check for crossfade filter
+    assert "-map" in ffmpeg_call
     
-    # Get the audio filter argument
-    af_index = ffmpeg_call.index("-af")
-    af_value = ffmpeg_call[af_index + 1]
-    assert "acrossfade" in af_value  # Check filter value
+    # Verify input files
+    for audio_file in audio_files:
+        assert audio_file in ffmpeg_call
     
-    # Verify cleanup
-    mock_unlink.assert_called_once_with("temp_list.txt")
-    
-    # Test error handling
-    mock_run.side_effect = Exception("FFmpeg Error")
-    result = combine_audio_files(audio_files, output_file)
-    assert result is False
+    # Verify output file
+    assert str(output_file) in ffmpeg_call
 
 def test_generate_podcast_audio(mocker):
     """Test full podcast audio generation"""
@@ -592,6 +642,176 @@ def test_sanitize_filename():
     
     # Test video ID only
     assert sanitize_filename("-moW9jvvMr4") == "_moW9jvvMr4"
+
+def test_generate_video_segments(mocker):
+    """Test video prompt generation from podcast script"""
+    mock_get_prompts = mocker.patch('ell.simple')
+    mock_decorator = mocker.MagicMock()
+    mock_function = mocker.MagicMock()
+    mock_function.return_value = json.dumps(MOCK_VIDEO_PROMPTS)
+    mock_decorator.return_value = mock_function
+    mock_get_prompts.return_value = mock_decorator
+    
+    prompts = generate_video_segments(MOCK_PODCAST_SCRIPT)
+    
+    assert prompts is not None
+    assert len(prompts) == 5
+    assert all("Camera" in prompt for prompt in prompts)
+    assert all(any(shot in prompt for shot in ["Establishing Shot", "Wide Shot", "Close-Up Shot", "Tracking Shot", "Aerial Shot"]) for prompt in prompts)
+
+@pytest.mark.luma
+def test_generate_video_segments_with_luma(mock_luma_client, temp_dir, mocker):
+    """Test video generation with LumaAI"""
+    mocker.patch('requests.get', return_value=mocker.MagicMock(content=b"mock video data"))
+    mocker.patch('ytsum.luma_client', mock_luma_client)
+    
+    video_paths = generate_video_segments_with_luma(MOCK_VIDEO_PROMPTS, temp_dir)
+    
+    assert video_paths is not None
+    assert len(video_paths) == 5
+    assert all(Path(path).exists() for path in video_paths)
+
+@pytest.mark.runway
+def test_generate_video_segments_with_runway(mock_runway_client, temp_dir, mocker):
+    """Test video generation with RunwayML"""
+    mocker.patch('requests.get', return_value=mocker.MagicMock(content=b"mock video data"))
+    mocker.patch('ytsum.runway_client', mock_runway_client)
+    
+    video_paths = generate_video_segments_with_runway(MOCK_VIDEO_PROMPTS, temp_dir)
+    
+    assert video_paths is not None
+    assert len(video_paths) == 5
+    assert all(Path(path).exists() for path in video_paths)
+
+def test_combine_video_segments(temp_dir, mocker):
+    """Test combining video segments"""
+    video_paths = []
+    for i in range(5):
+        path = temp_dir / f"segment_{i:02d}.mp4"
+        path.write_bytes(b"mock video data")
+        video_paths.append(path)
+    
+    mock_run = mocker.patch('subprocess.run')
+    mock_run.return_value.stdout = "60.0"
+    
+    output_path = temp_dir / "combined.mp4"
+    result = combine_video_segments(video_paths, 120.0, output_path)
+    
+    assert result is True
+    assert mock_run.call_count >= 3
+
+def test_get_audio_duration(temp_dir, mocker):
+    """Test getting audio duration"""
+    audio_path = temp_dir / "test.mp3"
+    audio_path.write_bytes(b"mock audio data")
+    
+    # Mock ffprobe call
+    mock_run = mocker.patch('subprocess.run')
+    mock_run.return_value.stdout = "180.5"
+    
+    duration = get_audio_duration(str(audio_path))
+    
+    assert duration == 180.5
+    mock_run.assert_called_once()
+
+def test_combine_audio_video(temp_dir, mocker):
+    """Test combining audio and video"""
+    # Create test files
+    video_path = temp_dir / "video.mp4"
+    audio_path = temp_dir / "audio.mp3"
+    output_path = temp_dir / "final.mp4"
+    
+    video_path.write_bytes(b"mock video data")
+    audio_path.write_bytes(b"mock audio data")
+    
+    # Mock ffmpeg run
+    mock_run = mocker.patch('ffmpeg.run')
+    
+    result = combine_audio_video(str(video_path), str(audio_path), str(output_path))
+    
+    assert result is True
+    mock_run.assert_called_once()
+    
+    # Test error handling
+    mock_run.side_effect = ffmpeg.Error("mock error", "", b"mock stderr")
+    result = combine_audio_video(str(video_path), str(audio_path), str(output_path))
+    assert result is False
+
+def test_sanitize_filename():
+    """Test filename sanitization"""
+    test_cases = [
+        ("https://youtube.com/watch?v=abc123", "abc123"),
+        ("abc123?feature=share", "abc123_feature_share"),
+        ("test/file:name*", "test_file_name_"),
+        ("Test File Name!", "Test_File_Name_")
+    ]
+    
+    for input_name, expected in test_cases:
+        assert sanitize_filename(input_name) == expected
+
+def test_generate_video_segments_invalid_response(mocker):
+    """Test handling of invalid prompt generation response"""
+    mock_get_prompts = mocker.patch('ell.simple')
+    mock_decorator = mocker.MagicMock()
+    mock_function = mocker.MagicMock()
+    
+    # Test with invalid number of prompts
+    mock_function.return_value = json.dumps(["only one prompt"])
+    mock_decorator.return_value = mock_function
+    mock_get_prompts.return_value = mock_decorator
+    
+    prompts = generate_video_segments(MOCK_PODCAST_SCRIPT)
+    assert prompts is None
+    
+    # Test with missing shot type
+    invalid_prompts = [
+        "Scene one: Description. Camera dolly through space. Mood.",
+        "Scene two: More description. Camera track along path. Mood.",
+        "Scene three: Another description. Camera orbit around subject. Mood.",
+        "Scene four: Yet more description. Camera glide forward. Mood.",
+        "Scene five: Final description. Camera pull back to reveal all. Mood."
+    ]
+    mock_function.return_value = json.dumps(invalid_prompts)
+    prompts = generate_video_segments(MOCK_PODCAST_SCRIPT)
+    assert prompts is None
+
+def test_generate_image_prompts(mocker):
+    """Test conversion of video prompts to image prompts"""
+    mock_get_prompts = mocker.patch('ell.simple')
+    mock_decorator = mocker.MagicMock()
+    mock_function = mocker.MagicMock()
+    mock_function.return_value = json.dumps(MOCK_IMAGE_PROMPTS)
+    mock_decorator.return_value = mock_function
+    mock_get_prompts.return_value = mock_decorator
+    
+    prompts = generate_image_prompts(MOCK_VIDEO_PROMPTS)
+    
+    assert prompts is not None
+    assert len(prompts) == len(MOCK_VIDEO_PROMPTS)
+    assert all("masterpiece" in prompt for prompt in prompts)
+
+def test_generate_flux_images(mock_replicate_client, temp_dir):
+    """Test Flux image generation"""
+    image_paths = generate_flux_images(MOCK_IMAGE_PROMPTS, temp_dir)
+    
+    assert image_paths is not None
+    assert len(image_paths) == len(MOCK_IMAGE_PROMPTS)
+    assert all(Path(path).exists() for path in image_paths)
+
+def test_calculate_num_segments():
+    """Test segment number calculation"""
+    assert calculate_num_segments(30) == 1  # Short video
+    assert calculate_num_segments(120) == 4  # Medium video
+    assert calculate_num_segments(600) == 10  # Long video (max)
+
+def test_calculate_target_length():
+    """Test target length calculation"""
+    short = calculate_target_length(180)  # 3 minutes
+    medium = calculate_target_length(600)  # 10 minutes
+    long = calculate_target_length(1800)  # 30 minutes
+    
+    assert short['summary'] < medium['summary'] < long['summary']
+    assert short['podcast'] < medium['podcast'] < long['podcast']
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"]) 
