@@ -19,7 +19,7 @@ A Python tool to generate summaries, podcasts, and videos from YouTube content.
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/ytsum.git
+git clone https://github.com/sliday/ytsum.git
 cd ytsum
 ```
 
