@@ -1,6 +1,10 @@
-# YT Summary
+# Awesome YouTube Video Summary/Podcast/Video
 
 A Python tool to generate summaries, podcasts, and videos from YouTube content.
+
+## Example
+- Original video: https://www.youtube.com/watch?v=_K-L9uhsBLM
+- Summary: https://dl.dropbox.com/scl/fi/mdkbglfbs4m9ydeo9a2k7/video-_K-L9uhsBLM.mp4?rlkey=3wrowryg9gio1walaxhdbp2is&dl=0
 
 ## Features
 
