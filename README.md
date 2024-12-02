@@ -1,6 +1,8 @@
 # Awesome YouTube Video Summary/Podcast/Video
 
-A Python tool to generate summaries, podcasts, and videos from YouTube content.
+A Python script to generate summaries (Claude), podcasts (Whisper), and videos (RunwayML or Luma AI) from annoyingly long YouTube content.
+
+![CleanShot 2024-12-02 at 16 25 26@2x](https://github.com/user-attachments/assets/f1881131-b645-4ecb-a2ad-966d81a95451)
 
 ## Example
 - Original video: https://www.youtube.com/watch?v=_K-L9uhsBLM
