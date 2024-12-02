@@ -22,6 +22,7 @@ from runwayml import RunwayML
 from PIL import Image, ImageDraw
 import base64
 import io
+import math
 
 # Initialize colorama
 init()
@@ -155,28 +156,66 @@ def to_shorthand(text):
     
     return result
 
-def clean_youtube_url(url_or_id):
-    """Clean and normalize YouTube URL or video ID"""
-    # Check if input is just a video ID
-    if not any(domain in url_or_id for domain in ['youtube.com', 'youtu.be']):
-        # Assume it's a video ID, construct full URL
-        return f"https://www.youtube.com/watch?v={url_or_id}"
+def clean_youtube_url(url):
+    """Clean and validate YouTube URL or video ID"""
+    # Extract video ID from various URL formats
+    video_id = None
     
-    # Handle full URL
-    url = urllib.parse.unquote(url_or_id)
-    url = url.replace('\\', '')
+    # Unescape URL first
+    url = urllib.parse.unquote(url.replace('\\', ''))
+    
+    # Handle full URLs
+    if url.startswith(('http://', 'https://')):
+        try:
+            parsed = urllib.parse.urlparse(url)
+            if 'youtu.be' in parsed.netloc.lower():
+                video_id = parsed.path.strip('/')
+            else:
+                params = urllib.parse.parse_qs(parsed.query)
+                video_id = params['v'][0]
+        except:
+            pass
+    
+    # Handle partial URLs
+    elif 'youtube.com' in url.lower() or 'youtu.be' in url.lower():
+        try:
+            if 'youtu.be' in url.lower():
+                video_id = url.split('youtu.be/')[-1].split('?')[0]
+            else:
+                video_id = url.split('v=')[1].split('&')[0]
+        except:
+            pass
+    
+    # Handle direct video ID
+    else:
+        video_id = url.strip('/')
+    
+    # Validate video ID format (11 characters, alphanumeric and -_)
+    if not video_id or not re.match(r'^[A-Za-z0-9_-]{11}$', video_id):
+        raise ValueError(f"Invalid YouTube video ID: {video_id}")
+    
+    # Check if video exists
     try:
-        if 'youtu.be' in url:
-            video_id = url.split('/')[-1].split('?')[0]
-        else:
-            # Extract v parameter
-            query = urllib.parse.urlparse(url).query
-            params = urllib.parse.parse_qs(query)
-            video_id = params['v'][0]
+        result = subprocess.run([
+            'yt-dlp',
+            '--simulate',
+            '--no-warnings',
+            '--no-playlist',
+            f'https://www.youtube.com/watch?v={video_id}'
+        ], capture_output=True, text=True)
         
-        return f"https://www.youtube.com/watch?v={video_id}"
-    except:
-        return url
+        if result.returncode != 0:
+            error_msg = result.stderr.strip()
+            if "Video unavailable" in error_msg:
+                raise ValueError(f"Video {video_id} is unavailable or has been removed")
+            elif "Private video" in error_msg:
+                raise ValueError(f"Video {video_id} is private")
+            else:
+                raise ValueError(f"Error accessing video: {error_msg}")
+    except subprocess.CalledProcessError:
+        raise ValueError(f"Could not verify video availability")
+    
+    return f"https://www.youtube.com/watch?v={video_id}"
 
 def download_video(url, output_path):
     """Download audio using yt-dlp"""
@@ -1127,9 +1166,6 @@ def generate_video_segments_with_runway(prompts, output_dir, base_images=None):
         print_error("RUNWAYML_API_SECRET environment variable not set")
         return None
     
-    MAX_RETRIES = 60  # Maximum number of polling attempts (5 minutes at 5s intervals)
-    POLL_INTERVAL = 5  # Seconds between polling attempts
-    
     video_paths = []
     for i, prompt in enumerate(prompts):
         try:
@@ -1162,9 +1198,8 @@ def generate_video_segments_with_runway(prompts, output_dir, base_images=None):
                 ratio="1280:768"
             )
             
-            # Poll for completion with timeout
-            retries = 0
-            while retries < MAX_RETRIES:
+            # Poll for completion
+            while True:
                 task_status = runway_client.tasks.retrieve(id=task.id)
                 
                 # Handle all possible statuses
@@ -1190,18 +1225,15 @@ def generate_video_segments_with_runway(prompts, output_dir, base_images=None):
                     print_error("Video generation was cancelled")
                     return None
                 elif task_status.status == "THROTTLED":
-                    print_step(EMOJI_VIDEO, f"Generation queued (throttled)... (attempt {retries + 1}/{MAX_RETRIES})", color=Fore.YELLOW)
+                    print_step(EMOJI_VIDEO, f"Generation queued (throttled)...", color=Fore.YELLOW)
                 elif task_status.status == "PENDING":
-                    print_step(EMOJI_VIDEO, f"Generation pending... (attempt {retries + 1}/{MAX_RETRIES})", color=Fore.YELLOW)
+                    print_step(EMOJI_VIDEO, f"Generation pending...", color=Fore.YELLOW)
                 elif task_status.status == "RUNNING":
-                    progress = getattr(task_status, 'progress', 0) * 100
-                    print_step(EMOJI_VIDEO, f"Generating segment {i+1}... ({progress:.0f}%) (attempt {retries + 1}/{MAX_RETRIES})", color=Fore.YELLOW)
-                elif retries >= MAX_RETRIES - 1:
-                    print_error("Video generation timed out")
-                    return None
+                    # Get progress safely with default of 0
+                    progress = float(getattr(task_status, 'progress', 0) or 0) * 100
+                    print_step(EMOJI_VIDEO, f"Generating segment {i+1}... ({progress:.0f}%)", color=Fore.YELLOW)
                 
-                time.sleep(POLL_INTERVAL)
-                retries += 1
+                time.sleep(5)  # Poll every 5 seconds
             
             # Download video
             output_path = output_dir / f"segment_{i:02d}.mp4"
@@ -1217,10 +1249,32 @@ def generate_video_segments_with_runway(prompts, output_dir, base_images=None):
     
     return video_paths
 
-def calculate_num_segments(audio_duration, segment_length=30):
-    """Calculate optimal number of video segments based on audio duration"""
-    # Round up to ensure we have enough segments to cover the audio
-    return max(1, min(10, round(audio_duration / segment_length)))
+def calculate_num_segments(audio_duration, provider="luma"):
+    """Calculate optimal number of video segments based on audio duration and provider"""
+    # Provider-specific segment durations
+    SEGMENT_DURATIONS = {
+        "luma": 5,    # LumaAI generates 5s videos
+        "runway": 10  # RunwayML generates 10s videos
+    }
+    
+    segment_duration = SEGMENT_DURATIONS.get(provider, 5)  # Default to 5s if provider unknown
+    
+    # Calculate ideal number of segments to cover the audio
+    ideal_segments = math.ceil(audio_duration / segment_duration)
+    
+    # Keep segments between 2 and 5 for coherent storytelling
+    if audio_duration <= segment_duration:
+        # Very short audio - single segment
+        return 1
+    elif audio_duration <= 2 * segment_duration:
+        # Short audio - two segments
+        return 2
+    elif audio_duration <= 5 * segment_duration:
+        # Medium audio - scale segments based on duration
+        return min(5, max(2, ideal_segments))
+    else:
+        # Long audio - cap at 5 segments
+        return 5
 
 def calculate_target_length(duration_seconds):
     """Calculate target word counts based on content duration"""
@@ -1328,12 +1382,26 @@ def main():
     
     args = parser.parse_args()
     
+    try:
+        # Clean and validate URL
+        clean_url = clean_youtube_url(args.url)
+    except ValueError as e:
+        print_error(str(e))
+        sys.exit(1)
+    except Exception as e:
+        print_error(f"Error processing URL: {e}")
+        sys.exit(1)
+    
     # Get video ID for filenames
-    video_id = sanitize_filename(args.url.split('/')[-1])
+    try:
+        video_id = clean_url.split('v=')[1].split('&')[0]
+    except:
+        print_error("Could not extract video ID from URL")
+        sys.exit(1)
     
     # Get video metadata first
     try:
-        metadata = get_video_metadata(args.url)
+        metadata = get_video_metadata(clean_url)
     except Exception as e:
         print_error(f"Error processing metadata: {e}")
         metadata = ""  # Continue without metadata
@@ -1347,7 +1415,7 @@ def main():
         transcript = None
         if not args.ignore_subs:
             subtitle_language = args.language.lower() if args.language else "en"
-            subtitle_file = get_youtube_subtitles(args.url, str(base_path), subtitle_language)
+            subtitle_file = get_youtube_subtitles(clean_url, str(base_path), subtitle_language)
             
             if subtitle_file:
                 # Read the subtitle file
@@ -1364,7 +1432,7 @@ def main():
                      else 'Fast Whisper')  # Default
             print_step(EMOJI_TRANSCRIBE, f"Using {method} for transcription...")
             
-            if not download_video(args.url, str(audio_path)):
+            if not download_video(clean_url, str(audio_path)):
                 sys.exit(1)
             
             if not transcribe_video(str(audio_path), 
@@ -1440,7 +1508,10 @@ def main():
                     sys.exit(1)
                 
                 # Calculate number of segments needed
-                num_segments = calculate_num_segments(audio_duration)
+                num_segments = calculate_num_segments(
+                    audio_duration, 
+                    provider="luma" if args.lumaai else "runway"
+                )
                 
                 # Generate video prompts
                 prompts = generate_video_segments(podcast_script, num_segments=num_segments)
