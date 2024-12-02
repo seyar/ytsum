@@ -3,6 +3,7 @@
 A Python script to generate summaries (Claude), podcasts (Whisper), and videos (RunwayML or Luma AI) from annoyingly long YouTube content.
 
 ![CleanShot 2024-12-02 at 16 25 26@2x](https://github.com/user-attachments/assets/f1881131-b645-4ecb-a2ad-966d81a95451)
+![CleanShot 2024-12-02 at 16 26 49@2x](https://github.com/user-attachments/assets/6aff0f22-3da3-488e-8e4e-27bb442ece86)
 
 ## Example
 - Original video: https://www.youtube.com/watch?v=_K-L9uhsBLM
