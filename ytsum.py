@@ -983,33 +983,33 @@ def generate_video_segments(podcast_script, num_segments=5, seed=42):
         print_error(f"Error generating video prompts: {e}")
         return None
 
+def upload_image_to_uguu(image_path):
+    """Upload image to uguu.se and get URL"""
+    try:
+        url = "https://uguu.se/upload"
+        with open(image_path, 'rb') as f:
+            files = {'files[]': f}
+            response = requests.post(url, files=files)
+            
+        if response.status_code != 200:
+            raise Exception(f"Upload failed with status {response.status_code}")
+            
+        # Response is JSON array with file info
+        result = response.json()
+        if not result or not isinstance(result, list) or not result[0].get('url'):
+            raise Exception("Invalid response format")
+            
+        return result[0]['url']
+        
+    except Exception as e:
+        print_error(f"Error uploading image: {e}")
+        return None
+
 def generate_video_segments_with_luma(prompts, output_dir, base_images=None):
     """Generate video segments using LumaAI with optional base images"""
     if not luma_client:
         print_error("LUMA_API_KEY environment variable not set")
         return None
-    
-    def resize_and_convert_to_base64(image_url, max_size=(1280, 720)):
-        """Download, resize, and convert image to base64 JPG"""
-        response = requests.get(image_url, stream=True)
-        img = Image.open(response.raw)
-        
-        # Convert to RGB if needed
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
-        
-        # Calculate new size maintaining aspect ratio
-        ratio = min(max_size[0] / img.width, max_size[1] / img.height)
-        new_size = (int(img.width * ratio), int(img.height * ratio))
-        img = img.resize(new_size, Image.Resampling.LANCZOS)
-        
-        # Convert to JPG in memory
-        buffer = io.BytesIO()
-        img.save(buffer, format='JPEG', quality=85)
-        image_bytes = buffer.getvalue()
-        
-        # Convert to base64
-        return f"data:image/jpeg;base64,{base64.b64encode(image_bytes).decode('utf-8')}"
     
     video_paths = []
     for i, prompt in enumerate(prompts):
@@ -1024,9 +1024,17 @@ def generate_video_segments_with_luma(prompts, output_dir, base_images=None):
             
             # Add base image if available
             if base_images and i < len(base_images):
-                # Download, resize, and convert image to base64
-                image_uri = resize_and_convert_to_base64(base_images[i])
-                generation_params["init_image"] = image_uri
+                # Upload image to uguu.se and get URL
+                image_url = upload_image_to_uguu(base_images[i])
+                if not image_url:
+                    print_error(f"Failed to upload image {i+1}, continuing without image")
+                else:
+                    generation_params["keyframes"] = {
+                        "frame0": {
+                            "type": "image",
+                            "url": image_url
+                        }
+                    }
             
             # Create generation
             generation = luma_client.generations.create(**generation_params)
@@ -1130,20 +1138,27 @@ def get_audio_duration(audio_path):
         return None
 
 def combine_audio_video(video_path, audio_path, output_path):
-    """Combine video with audio track using ffmpeg"""
+    """Combine video with audio track using ffmpeg and add fade out"""
     try:
         print_step(EMOJI_VIDEO, "Combining video and audio...")
         
-        # Use ffmpeg-python to combine video and audio
+        # Get video duration
+        probe = ffmpeg.probe(video_path)
+        duration = float(probe['streams'][0]['duration'])
+        fade_start = duration - 1  # Start fade 1 second before end
+        
+        # Create filter complex for fade out
+        video_filter = f"fade=t=out:st={fade_start}:d=1"  # 1 second fade to black
+        
+        # Use ffmpeg-python to combine video and audio with fade
         input_video = ffmpeg.input(video_path)
         input_audio = ffmpeg.input(audio_path)
         
-        # Combine streams
+        # Combine streams with fade effect
         stream = ffmpeg.output(
-            input_video,
+            input_video.filter(video_filter),
             input_audio,
             str(output_path),
-            vcodec='copy',  # Copy video stream without re-encoding
             acodec='aac',   # Use AAC for audio
             strict='experimental'
         )
@@ -1160,7 +1175,7 @@ def combine_audio_video(video_path, audio_path, output_path):
         print_error(f"Error combining audio and video: {e}")
         return False
 
-def generate_video_segments_with_runway(prompts, output_dir, base_images=None):
+def generate_video_segments_with_runway(prompts, output_dir, base_images=None, timeout=900):  # 15 min default timeout
     """Generate video segments using RunwayML with optional base images"""
     if not runway_client:
         print_error("RUNWAYML_API_SECRET environment variable not set")
@@ -1173,13 +1188,11 @@ def generate_video_segments_with_runway(prompts, output_dir, base_images=None):
             
             # Use base image if available, otherwise create gradient
             if base_images and i < len(base_images):
-                # Read image and convert to base64
                 with open(base_images[i], 'rb') as f:
                     image_bytes = f.read()
                 image_b64 = base64.b64encode(image_bytes).decode('utf-8')
                 image_uri = f"data:image/jpeg;base64,{image_b64}"
             else:
-                # Create gradient image and convert to base64
                 temp_image = output_dir / f"input_{i:02d}.png"
                 gradient = create_gradient_image()
                 gradient.save(temp_image)
@@ -1198,13 +1211,31 @@ def generate_video_segments_with_runway(prompts, output_dir, base_images=None):
                 ratio="1280:768"
             )
             
-            # Poll for completion
-            while True:
-                task_status = runway_client.tasks.retrieve(id=task.id)
+            # Poll for completion with timeout
+            start_time = time.time()
+            max_retries = 180  # Maximum number of retries (15 min with 5s sleep)
+            retries = 0
+            
+            while retries < max_retries:
+                # Check timeout
+                if time.time() - start_time > timeout:
+                    print_error(f"Timeout after {timeout} seconds")
+                    try:
+                        runway_client.tasks.cancel(id=task.id)
+                    except:
+                        pass
+                    return None
+                
+                try:
+                    task_status = runway_client.tasks.retrieve(id=task.id)
+                except Exception as e:
+                    print_error(f"Error retrieving task status: {e}")
+                    time.sleep(5)
+                    retries += 1
+                    continue
                 
                 # Handle all possible statuses
                 if task_status.status == "SUCCEEDED":
-                    # Get first video URL from output array
                     if not hasattr(task_status, 'output') or not task_status.output:
                         print_error("No output in completed task")
                         return None
@@ -1214,34 +1245,54 @@ def generate_video_segments_with_runway(prompts, output_dir, base_images=None):
                         print_error("Invalid output format in task")
                         return None
                     
-                    video_url = video_urls[0]  # Get first URL
+                    video_url = video_urls[0]
                     break
                     
                 elif task_status.status == "FAILED":
                     error_msg = getattr(task_status, 'failure', '') or getattr(task_status, 'failureCode', 'Unknown error')
                     print_error(f"Video generation failed: {error_msg}")
                     return None
+                    
                 elif task_status.status == "CANCELLED":
                     print_error("Video generation was cancelled")
                     return None
+                    
                 elif task_status.status == "THROTTLED":
-                    print_step(EMOJI_VIDEO, f"Generation queued (throttled)...", color=Fore.YELLOW)
+                    print_step(EMOJI_VIDEO, f"Generation queued (throttled)... Attempt {retries+1}/{max_retries}", color=Fore.YELLOW)
+                    
                 elif task_status.status == "PENDING":
-                    print_step(EMOJI_VIDEO, f"Generation pending...", color=Fore.YELLOW)
+                    print_step(EMOJI_VIDEO, f"Generation pending... Attempt {retries+1}/{max_retries}", color=Fore.YELLOW)
+                    
                 elif task_status.status == "RUNNING":
-                    # Get progress safely with default of 0
                     progress = float(getattr(task_status, 'progress', 0) or 0) * 100
-                    print_step(EMOJI_VIDEO, f"Generating segment {i+1}... ({progress:.0f}%)", color=Fore.YELLOW)
+                    elapsed = int(time.time() - start_time)
+                    print_step(EMOJI_VIDEO, 
+                             f"Generating segment {i+1}... ({progress:.0f}%) - {elapsed}s elapsed", 
+                             color=Fore.YELLOW)
                 
-                time.sleep(5)  # Poll every 5 seconds
+                time.sleep(5)
+                retries += 1
+            
+            else:  # Loop completed without break
+                print_error(f"Maximum retries ({max_retries}) reached")
+                try:
+                    runway_client.tasks.cancel(id=task.id)
+                except:
+                    pass
+                return None
             
             # Download video
-            output_path = output_dir / f"segment_{i:02d}.mp4"
-            response = requests.get(video_url, stream=True)
-            with open(output_path, 'wb') as file:
-                file.write(response.content)
-            
-            video_paths.append(output_path)
+            try:
+                output_path = output_dir / f"segment_{i:02d}.mp4"
+                response = requests.get(video_url, stream=True, timeout=30)
+                response.raise_for_status()
+                with open(output_path, 'wb') as file:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        file.write(chunk)
+                video_paths.append(output_path)
+            except Exception as e:
+                print_error(f"Error downloading video: {e}")
+                return None
             
         except Exception as e:
             print_error(f"Error generating video segment {i+1}: {e}")
@@ -1352,6 +1403,23 @@ def generate_flux_images(prompts, output_dir):
             return None
     
     return image_paths
+
+def create_gradient_image(width=1280, height=768):
+    """Create a simple gradient image for video generation"""
+    image = Image.new('RGB', (width, height))
+    draw = ImageDraw.Draw(image)
+    
+    # Create a vertical gradient from dark to light blue
+    for y in range(height):
+        # Calculate color components
+        r = int(20 * y / height)  # Dark to slightly red
+        g = int(50 * y / height)  # Dark to medium green
+        b = int(255 * y / height)  # Dark to bright blue
+        
+        # Draw horizontal line with current color
+        draw.line([(0, y), (width, y)], fill=(r, g, b))
+    
+    return image
 
 def main():
     # Set up argument parser
@@ -1529,8 +1597,7 @@ def main():
                 
                 # Generate video segments with selected provider
                 if args.lumaai:
-                    print_step(EMOJI_VIDEO, "Note: Luma AI will use text-only generation (image input requires hosted URLs)")
-                    video_paths = generate_video_segments_with_luma(prompts, video_temp_dir)
+                    video_paths = generate_video_segments_with_luma(prompts, video_temp_dir, base_images)
                 else:  # args.runwayml
                     video_paths = generate_video_segments_with_runway(prompts, video_temp_dir, base_images)
                 

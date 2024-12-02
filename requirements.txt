@@ -10,3 +10,4 @@ ffmpeg-python
 pytest
 pytest-mock
 pytest-asyncio
+pytest-timeout>=2.1.0

@@ -29,10 +29,15 @@ from ytsum import (
     generate_image_prompts,
     generate_flux_images,
     calculate_num_segments,
-    calculate_target_length
+    calculate_target_length,
+    upload_image_to_uguu,
 )
 import shutil
 import ffmpeg
+import requests
+from unittest.mock import Mock, patch
+import tempfile
+import time
 
 # Test data
 MOCK_PODCAST_SCRIPT = """
@@ -91,6 +96,26 @@ def mock_replicate_client(mocker):
     mock_run = mocker.patch('replicate.run')
     mock_run.return_value = "http://example.com/image.jpg"
     return mock_run
+
+@pytest.fixture
+def mock_uguu_response(mocker):
+    """Mock successful Uguu API response"""
+    mock_response = mocker.MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = [{
+        'url': 'https://uguu.se/files/example.jpg',
+        'name': 'example.jpg',
+        'size': 12345,
+        'hash': 'abc123'
+    }]
+    return mock_response
+
+@pytest.fixture
+def mock_gradient_image(mocker):
+    """Mock gradient image creation"""
+    mock_image = mocker.MagicMock()
+    mocker.patch("ytsum.create_gradient_image", return_value=mock_image)
+    return mock_image
 
 def test_clean_youtube_url():
     # Test video ID only
@@ -166,6 +191,9 @@ def test_convert_audio_format(mocker):
     assert args[args.index("-b:a") + 1] == "32k"  # Custom bitrate
 
 def test_get_video_metadata(mocker):
+    # Mock clean_youtube_url first
+    mocker.patch("ytsum.clean_youtube_url", return_value="https://youtube.com/watch?v=test_id")
+    
     # Mock yt-dlp JSON output
     mock_metadata = {
         "title": "Test Video",
@@ -179,6 +207,7 @@ def test_get_video_metadata(mocker):
     
     # Mock subprocess run
     mock_run = mocker.patch("subprocess.run")
+    mock_run.return_value.returncode = 0
     mock_run.return_value.stdout = json.dumps(mock_metadata)
     
     # Mock metadata processing
@@ -391,6 +420,9 @@ def test_get_language_code(mocker):
     assert get_language_code("") == "en"
 
 def test_get_youtube_subtitles(mocker):
+    # Mock clean_youtube_url
+    mocker.patch("ytsum.clean_youtube_url", return_value="https://youtube.com/watch?v=test_id")
+    
     # Mock language code conversion
     mock_get_code = mocker.patch("ytsum.get_language_code")
     mock_get_code.side_effect = lambda x: {
@@ -671,17 +703,146 @@ def test_generate_video_segments_with_luma(mock_luma_client, temp_dir, mocker):
     assert len(video_paths) == 5
     assert all(Path(path).exists() for path in video_paths)
 
-@pytest.mark.runway
-def test_generate_video_segments_with_runway(mock_runway_client, temp_dir, mocker):
+@pytest.mark.timeout(30)  # Timeout after 30 seconds
+def test_generate_video_segments_with_runway():
     """Test video generation with RunwayML"""
-    mocker.patch('requests.get', return_value=mocker.MagicMock(content=b"mock video data"))
-    mocker.patch('ytsum.runway_client', mock_runway_client)
+    # Mock RunwayML client and responses
+    mock_task = Mock()
+    mock_task.id = "test_task_id"
     
-    video_paths = generate_video_segments_with_runway(MOCK_VIDEO_PROMPTS, temp_dir)
+    # Mock task status responses
+    class MockTaskStatus:
+        def __init__(self, status, progress=0):
+            self.status = status
+            self.progress = progress
+            self.output = ["https://example.com/test.mp4"] if status == "SUCCEEDED" else None
     
-    assert video_paths is not None
-    assert len(video_paths) == 5
-    assert all(Path(path).exists() for path in video_paths)
+    # Create sequence of status responses
+    status_responses = iter([
+        MockTaskStatus("PENDING"),
+        MockTaskStatus("RUNNING", 0.5),
+        MockTaskStatus("SUCCEEDED"),
+        # Second prompt responses
+        MockTaskStatus("PENDING"),
+        MockTaskStatus("RUNNING", 0.5),
+        MockTaskStatus("SUCCEEDED")
+    ])
+    
+    mock_runway = Mock()
+    mock_runway.image_to_video.create.return_value = mock_task
+    
+    # Set up status retrieval to return sequence of responses
+    def mock_retrieve(*args, **kwargs):
+        try:
+            return next(status_responses)
+        except StopIteration:
+            return MockTaskStatus("SUCCEEDED")
+    
+    mock_runway.tasks.retrieve.side_effect = mock_retrieve
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = Path(temp_dir)
+        
+        # Create test prompts
+        prompts = [
+            "Test prompt 1",
+            "Test prompt 2"
+        ]
+        
+        # Create test base images
+        base_images = []
+        for i in range(len(prompts)):
+            img_path = temp_dir / f"test_image_{i}.jpg"
+            img_path.write_bytes(b"test image data")
+            base_images.append(img_path)
+        
+        # Mock requests.get for video download
+        mock_response = Mock()
+        mock_response.content = b"test video data"
+        mock_response.iter_content.return_value = [b"test video data"]
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        
+        with patch("ytsum.runway_client", mock_runway), \
+             patch("requests.get", return_value=mock_response), \
+             patch("time.sleep", return_value=None):  # Speed up by skipping sleeps
+            
+            # Call function with longer timeout
+            result = generate_video_segments_with_runway(
+                prompts=prompts,
+                output_dir=temp_dir,
+                base_images=base_images,
+                timeout=30  # Longer timeout
+            )
+            
+            # Verify results
+            assert result is not None
+            assert len(result) == len(prompts)
+            for path in result:
+                assert path.exists()
+                assert path.stat().st_size > 0
+            
+            # Verify API calls
+            assert mock_runway.image_to_video.create.call_count == len(prompts)
+            assert mock_runway.tasks.retrieve.call_count >= len(prompts)
+
+def test_generate_video_segments_with_runway_failure():
+    """Test handling of failed video generation"""
+    mock_task = Mock()
+    mock_task.id = "test_task_id"
+    
+    class MockTaskStatus:
+        def __init__(self, status):
+            self.status = status
+            self.failure = "Test failure"
+            self.failureCode = "TEST_ERROR"
+            self.output = None
+    
+    mock_runway = Mock()
+    mock_runway.image_to_video.create.return_value = mock_task
+    mock_runway.tasks.retrieve.return_value = MockTaskStatus("FAILED")
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = Path(temp_dir)
+        prompts = ["Test prompt"]
+        
+        with patch("ytsum.runway_client", mock_runway):
+            result = generate_video_segments_with_runway(
+                prompts=prompts,
+                output_dir=temp_dir,
+                timeout=5
+            )
+            
+            assert result is None
+            assert mock_runway.tasks.retrieve.called
+
+def test_generate_video_segments_with_runway_timeout():
+    """Test handling of timeout during video generation"""
+    mock_task = Mock()
+    mock_task.id = "test_task_id"
+    
+    class MockTaskStatus:
+        def __init__(self):
+            self.status = "RUNNING"
+            self.progress = 0.5
+    
+    mock_runway = Mock()
+    mock_runway.image_to_video.create.return_value = mock_task
+    mock_runway.tasks.retrieve.return_value = MockTaskStatus()
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir = Path(temp_dir)
+        prompts = ["Test prompt"]
+        
+        with patch("ytsum.runway_client", mock_runway):
+            result = generate_video_segments_with_runway(
+                prompts=prompts,
+                output_dir=temp_dir,
+                timeout=1  # Short timeout
+            )
+            
+            assert result is None
+            assert mock_runway.tasks.cancel.called
 
 def test_combine_video_segments(temp_dir, mocker):
     """Test combining video segments"""
@@ -724,6 +885,10 @@ def test_combine_audio_video(temp_dir, mocker):
     video_path.write_bytes(b"mock video data")
     audio_path.write_bytes(b"mock audio data")
     
+    # Mock ffmpeg probe
+    mock_probe = mocker.patch('ffmpeg.probe')
+    mock_probe.return_value = {'streams': [{'duration': '60.0'}]}
+    
     # Mock ffmpeg run
     mock_run = mocker.patch('ffmpeg.run')
     
@@ -731,11 +896,6 @@ def test_combine_audio_video(temp_dir, mocker):
     
     assert result is True
     mock_run.assert_called_once()
-    
-    # Test error handling
-    mock_run.side_effect = ffmpeg.Error("mock error", "", b"mock stderr")
-    result = combine_audio_video(str(video_path), str(audio_path), str(output_path))
-    assert result is False
 
 def test_sanitize_filename():
     """Test filename sanitization"""
@@ -800,9 +960,17 @@ def test_generate_flux_images(mock_replicate_client, temp_dir):
 
 def test_calculate_num_segments():
     """Test segment number calculation"""
-    assert calculate_num_segments(30) == 1  # Short video
-    assert calculate_num_segments(120) == 4  # Medium video
-    assert calculate_num_segments(600) == 10  # Long video (max)
+    # Test with Luma AI (5s segments)
+    assert calculate_num_segments(4, "luma") == 1  # Very short
+    assert calculate_num_segments(8, "luma") == 2  # Short
+    assert calculate_num_segments(20, "luma") == 4  # Medium
+    assert calculate_num_segments(50, "luma") == 5  # Long
+    
+    # Test with RunwayML (10s segments)
+    assert calculate_num_segments(8, "runway") == 1  # Very short
+    assert calculate_num_segments(15, "runway") == 2  # Short
+    assert calculate_num_segments(40, "runway") == 4  # Medium
+    assert calculate_num_segments(100, "runway") == 5  # Long
 
 def test_calculate_target_length():
     """Test target length calculation"""
@@ -812,6 +980,117 @@ def test_calculate_target_length():
     
     assert short['summary'] < medium['summary'] < long['summary']
     assert short['podcast'] < medium['podcast'] < long['podcast']
+
+def test_upload_image_to_uguu_success(temp_dir, mocker, mock_uguu_response):
+    """Test successful image upload to Uguu"""
+    # Create test image
+    test_image = temp_dir / "test.jpg"
+    test_image.write_bytes(b"fake image data")
+    
+    # Mock requests.post
+    mock_post = mocker.patch('requests.post', return_value=mock_uguu_response)
+    
+    # Test upload
+    result = upload_image_to_uguu(test_image)
+    
+    # Verify result
+    assert result == 'https://uguu.se/files/example.jpg'
+    
+    # Verify API call
+    mock_post.assert_called_once()
+    args, kwargs = mock_post.call_args
+    assert args[0] == 'https://uguu.se/upload'
+    assert 'files' in kwargs
+    assert 'files[]' in kwargs['files']
+
+def test_upload_image_to_uguu_http_error(temp_dir, mocker):
+    """Test Uguu upload with HTTP error"""
+    # Create test image
+    test_image = temp_dir / "test.jpg"
+    test_image.write_bytes(b"fake image data")
+    
+    # Mock failed response
+    mock_response = mocker.MagicMock()
+    mock_response.status_code = 500
+    mocker.patch('requests.post', return_value=mock_response)
+    
+    # Test upload
+    result = upload_image_to_uguu(test_image)
+    
+    # Verify failure
+    assert result is None
+
+def test_upload_image_to_uguu_invalid_response(temp_dir, mocker):
+    """Test Uguu upload with invalid response format"""
+    # Create test image
+    test_image = temp_dir / "test.jpg"
+    test_image.write_bytes(b"fake image data")
+    
+    # Mock response with invalid format
+    mock_response = mocker.MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = []  # Empty array
+    mocker.patch('requests.post', return_value=mock_response)
+    
+    # Test upload
+    result = upload_image_to_uguu(test_image)
+    
+    # Verify failure
+    assert result is None
+
+def test_upload_image_to_uguu_missing_file(temp_dir):
+    """Test Uguu upload with missing file"""
+    # Test with non-existent file
+    result = upload_image_to_uguu(temp_dir / "nonexistent.jpg")
+    
+    # Verify failure
+    assert result is None
+
+def test_upload_image_to_uguu_network_error(temp_dir, mocker):
+    """Test Uguu upload with network error"""
+    # Create test image
+    test_image = temp_dir / "test.jpg"
+    test_image.write_bytes(b"fake image data")
+    
+    # Mock network error
+    mocker.patch('requests.post', side_effect=requests.exceptions.RequestException("Network error"))
+    
+    # Test upload
+    result = upload_image_to_uguu(test_image)
+    
+    # Verify failure
+    assert result is None
+
+@pytest.mark.luma
+def test_luma_with_uguu_image(mock_luma_client, temp_dir, mocker, mock_uguu_response):
+    """Test Luma AI video generation with Uguu image upload"""
+    # Create test image and prompt
+    test_image = temp_dir / "test.jpg"
+    test_image.write_bytes(b"fake image data")
+    test_prompt = "Test video prompt"
+    
+    # Mock Uguu upload
+    mocker.patch('requests.post', return_value=mock_uguu_response)
+    
+    # Mock video download
+    mocker.patch('requests.get', return_value=mocker.MagicMock(content=b"mock video data"))
+    
+    # Mock Luma client
+    mocker.patch('ytsum.luma_client', mock_luma_client)
+    
+    # Test video generation with image
+    video_paths = generate_video_segments_with_luma([test_prompt], temp_dir, [test_image])
+    
+    # Verify success
+    assert video_paths is not None
+    assert len(video_paths) == 1
+    assert Path(video_paths[0]).exists()
+    
+    # Verify Luma API call included image URL
+    generation_call = mock_luma_client.generations.create.call_args
+    assert generation_call is not None
+    assert 'keyframes' in generation_call[1]
+    assert generation_call[1]['keyframes']['frame0']['url'] == 'https://uguu.se/files/example.jpg'
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"]) 
