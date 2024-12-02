@@ -21,6 +21,7 @@ import ffmpeg
 from runwayml import RunwayML
 from PIL import Image, ImageDraw
 import base64
+import io
 
 # Initialize colorama
 init()
@@ -949,24 +950,46 @@ def generate_video_segments_with_luma(prompts, output_dir, base_images=None):
         print_error("LUMA_API_KEY environment variable not set")
         return None
     
-    # Ensure output directory exists
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    def resize_and_convert_to_base64(image_url, max_size=(1280, 720)):
+        """Download, resize, and convert image to base64 JPG"""
+        response = requests.get(image_url, stream=True)
+        img = Image.open(response.raw)
+        
+        # Convert to RGB if needed
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        # Calculate new size maintaining aspect ratio
+        ratio = min(max_size[0] / img.width, max_size[1] / img.height)
+        new_size = (int(img.width * ratio), int(img.height * ratio))
+        img = img.resize(new_size, Image.Resampling.LANCZOS)
+        
+        # Convert to JPG in memory
+        buffer = io.BytesIO()
+        img.save(buffer, format='JPEG', quality=85)
+        image_bytes = buffer.getvalue()
+        
+        # Convert to base64
+        return f"data:image/jpeg;base64,{base64.b64encode(image_bytes).decode('utf-8')}"
     
     video_paths = []
     for i, prompt in enumerate(prompts):
         try:
-            print_step(EMOJI_VIDEO, f"Generating video segment {i+1}/5...")
+            print_step(EMOJI_VIDEO, f"Generating video segment {i+1}/{len(prompts)}...")
             
-            # Add base image if available
+            # Set up generation parameters
             generation_params = {
                 "prompt": prompt,
                 "aspect_ratio": "16:9"
             }
-            if base_images and i < len(base_images):
-                with open(base_images[i], 'rb') as f:
-                    generation_params["image"] = f.read()
             
+            # Add base image if available
+            if base_images and i < len(base_images):
+                # Download, resize, and convert image to base64
+                image_uri = resize_and_convert_to_base64(base_images[i])
+                generation_params["init_image"] = image_uri
+            
+            # Create generation
             generation = luma_client.generations.create(**generation_params)
             
             # Poll for completion
@@ -983,14 +1006,9 @@ def generate_video_segments_with_luma(prompts, output_dir, base_images=None):
             
             # Download video
             output_path = output_dir / f"segment_{i:02d}.mp4"
-            video_url = generation.assets.video
-            response = requests.get(video_url, stream=True)
+            response = requests.get(generation.assets.video, stream=True)
             with open(output_path, 'wb') as file:
                 file.write(response.content)
-            
-            # Verify file was created
-            if not output_path.exists():
-                raise FileNotFoundError(f"Failed to save video file: {output_path}")
             
             video_paths.append(output_path)
             
@@ -1109,16 +1127,8 @@ def generate_video_segments_with_runway(prompts, output_dir, base_images=None):
         print_error("RUNWAYML_API_SECRET environment variable not set")
         return None
     
-    # Create a simple gradient image as input
-    def create_gradient_image(width=1280, height=768):
-        image = Image.new('RGB', (width, height))
-        draw = ImageDraw.Draw(image)
-        for y in range(height):
-            r = int(255 * y / height)
-            g = int(128 * y / height)
-            b = int(192 * y / height)
-            draw.line([(0, y), (width, y)], fill=(r, g, b))
-        return image
+    MAX_RETRIES = 60  # Maximum number of polling attempts (5 minutes at 5s intervals)
+    POLL_INTERVAL = 5  # Seconds between polling attempts
     
     video_paths = []
     for i, prompt in enumerate(prompts):
@@ -1152,20 +1162,50 @@ def generate_video_segments_with_runway(prompts, output_dir, base_images=None):
                 ratio="1280:768"
             )
             
-            # Poll for completion
-            while True:
+            # Poll for completion with timeout
+            retries = 0
+            while retries < MAX_RETRIES:
                 task_status = runway_client.tasks.retrieve(id=task.id)
-                if task_status.status == "COMPLETED":
+                
+                # Handle all possible statuses
+                if task_status.status == "SUCCEEDED":
+                    # Get first video URL from output array
+                    if not hasattr(task_status, 'output') or not task_status.output:
+                        print_error("No output in completed task")
+                        return None
+                    
+                    video_urls = task_status.output
+                    if not video_urls or not isinstance(video_urls, list):
+                        print_error("Invalid output format in task")
+                        return None
+                    
+                    video_url = video_urls[0]  # Get first URL
                     break
+                    
                 elif task_status.status == "FAILED":
-                    print_error(f"Video generation failed: {task_status.error}")
+                    error_msg = getattr(task_status, 'failure', '') or getattr(task_status, 'failureCode', 'Unknown error')
+                    print_error(f"Video generation failed: {error_msg}")
                     return None
-                print_step(EMOJI_VIDEO, f"Generating segment {i+1}...", color=Fore.YELLOW)
-                time.sleep(3)
+                elif task_status.status == "CANCELLED":
+                    print_error("Video generation was cancelled")
+                    return None
+                elif task_status.status == "THROTTLED":
+                    print_step(EMOJI_VIDEO, f"Generation queued (throttled)... (attempt {retries + 1}/{MAX_RETRIES})", color=Fore.YELLOW)
+                elif task_status.status == "PENDING":
+                    print_step(EMOJI_VIDEO, f"Generation pending... (attempt {retries + 1}/{MAX_RETRIES})", color=Fore.YELLOW)
+                elif task_status.status == "RUNNING":
+                    progress = getattr(task_status, 'progress', 0) * 100
+                    print_step(EMOJI_VIDEO, f"Generating segment {i+1}... ({progress:.0f}%) (attempt {retries + 1}/{MAX_RETRIES})", color=Fore.YELLOW)
+                elif retries >= MAX_RETRIES - 1:
+                    print_error("Video generation timed out")
+                    return None
+                
+                time.sleep(POLL_INTERVAL)
+                retries += 1
             
             # Download video
             output_path = output_dir / f"segment_{i:02d}.mp4"
-            response = requests.get(task_status.output.video_url, stream=True)
+            response = requests.get(video_url, stream=True)
             with open(output_path, 'wb') as file:
                 file.write(response.content)
             
@@ -1227,12 +1267,13 @@ def generate_flux_images(prompts, output_dir):
         print_error("REPLICATE_API_TOKEN environment variable not set")
         return None
     
-    image_paths = []
+    image_paths = []  # Store local paths
     for i, prompt in enumerate(prompts):
         try:
             print_step(EMOJI_VIDEO, f"Generating base image {i+1}/{len(prompts)}...")
             
-            output = replicate.run(
+            # Get image URL from Replicate
+            output_url = replicate.run(
                 "black-forest-labs/flux-1.1-pro-ultra",
                 input={
                     "raw": False,
@@ -1246,7 +1287,7 @@ def generate_flux_images(prompts, output_dir):
             
             # Download and save image
             output_path = output_dir / f"base_{i:02d}.jpg"
-            response = requests.get(output)
+            response = requests.get(output_url, stream=True)
             with open(output_path, 'wb') as file:
                 file.write(response.content)
             
@@ -1417,7 +1458,8 @@ def main():
                 
                 # Generate video segments with selected provider
                 if args.lumaai:
-                    video_paths = generate_video_segments_with_luma(prompts, video_temp_dir, base_images)
+                    print_step(EMOJI_VIDEO, "Note: Luma AI will use text-only generation (image input requires hosted URLs)")
+                    video_paths = generate_video_segments_with_luma(prompts, video_temp_dir)
                 else:  # args.runwayml
                     video_paths = generate_video_segments_with_runway(prompts, video_temp_dir, base_images)
                 
