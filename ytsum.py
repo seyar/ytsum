@@ -555,11 +555,22 @@ def summarize_with_claude(transcript, metadata="", language="english"):
     
     targets = calculate_target_length(duration)
     
-    @ell.simple(model="claude-3-5-sonnet-20241022", temperature=0.3, max_tokens=4096)
+    # Read the prompt template
+    try:
+        with open('prompt.txt', 'r', encoding='utf-8') as f:
+            prompt_template = f.read()
+    except Exception as e:
+        print_error(f"Error reading prompt template: {e}")
+        return None
+    
+    @ell.simple(model="claude-3-5-sonnet-20241022", temperature=0.3, max_tokens=8192)
     def get_summary(content: str, target_words: int) -> str:
-        return f"""Summarize this transcript in {language}. 
+        # Format the prompt template with the target language
+        formatted_prompt = prompt_template.format(language=language)
+        
+        return f"""{formatted_prompt}
+
         Target length: {target_words} words.
-        Keep key points and insights, remove redundancy.
         
         Transcript:
         {content}"""
@@ -696,41 +707,42 @@ def convert_to_podcast_script(summary, language="english", duration=None):
     
     targets = calculate_target_length(duration)
     
-    # Randomly select two different voices
-    import random
-    available_voices = list(AVAILABLE_VOICES.keys())
-    host1_voice = random.choice(available_voices)
-    available_voices.remove(host1_voice)
-    host2_voice = random.choice(available_voices)
-    
     @ell.simple(model="claude-3-5-sonnet-20241022", temperature=0.3, max_tokens=4096)
-    def get_podcast(content: str, voice1: str, voice2: str) -> str:
+    def get_podcast(content: str, voice1: str, voice2: str, target_lang: str) -> str:
         return f"""Convert this summary into an engaging podcast script with two hosts.
-Target length: {targets['podcast']} words total.
-Use these voice names for the hosts: {voice1.upper()} and {voice2.upper()}.
+        Target length: {targets['podcast']} words total.
+        Output language: {target_lang}
+        Use these voice names for the hosts: {voice1.upper()} and {voice2.upper()}.
 
-Rules:
-1. Format each line as: "VOICE_NAME: <dialogue>"
-   Example: "{voice1.upper()}: That's an interesting point!"
-2. Use only {voice1.upper()} and {voice2.upper()} consistently
-3. Make it conversational but informative
-4. Keep the original language ({language})
-5. Include brief reactions and interactions between hosts
-6. Start with one host introducing the topic
-7. End with the other host wrapping up
-8. Keep the original insights and information
-9. Avoid meta-commentary or introductions
-10. Do NOT use typical AI buzzwords: dive in, delve into, fascinating,etc.
-10. Come up with original beginning (use ending for that). Do NOT start with "Today we are..."
+        Rules:
+        1. Format each line as: "VOICE_NAME: <dialogue>"
+           Example: "{voice1.upper()}: That's an interesting point!"
+        2. Use only {voice1.upper()} and {voice2.upper()} consistently
+        3. Make it conversational but informative
+        4. Keep all dialogue in {target_lang} language
+        5. Include brief reactions and interactions between hosts
+        6. Start with one host introducing the topic
+        7. End with the other host wrapping up
+        8. Keep the original insights and information
+        9. Avoid meta-commentary or introductions
+        10. Do NOT use typical AI buzzwords: dive in, delve into, fascinating,etc.
+        10. Come up with original beginning (use ending for that). Do NOT start with "Today we are..."
 
-Available voices:
-{json.dumps(AVAILABLE_VOICES, indent=2)}
+        Available voices:
+        {json.dumps(AVAILABLE_VOICES, indent=2)}
 
-Summary to convert:
-{content}"""
+        Summary to convert:
+        {content}"""
     
     try:
-        return get_podcast(summary, host1_voice, host2_voice)
+        # Randomly select two different voices
+        import random
+        available_voices = list(AVAILABLE_VOICES.keys())
+        host1_voice = random.choice(available_voices)
+        available_voices.remove(host1_voice)
+        host2_voice = random.choice(available_voices)
+        
+        return get_podcast(summary, host1_voice, host2_voice, language)
     except Exception as e:
         print_error(f"Error converting to podcast script: {e}")
         return None
@@ -917,90 +929,150 @@ def sanitize_filename(filename):
     return clean
 
 def generate_video_segments(podcast_script, num_segments=5, seed=42):
-    """Generate consistent video prompts that follow podcast script flow"""
+    """Generate video prompts that match podcast content and flow"""
     
     @ell.simple(model="claude-3-5-sonnet-20241022", temperature=0.3, max_tokens=2048)
     def get_video_prompts(script: str, num: int) -> str:
-        """Generate video prompts that match podcast segments."""
-        return f"""Create {num} cinematic video prompts that match this podcast script. Each prompt must follow this exact format:
-
-        "[Shot Type]: [Scene Description]. Camera [Movement Type] as [Visual Elements and Action]. [Mood/Atmosphere Details]."
-
-        Required Elements:
-        1. Shot Types: Must start with one of: Establishing Shot, Wide Shot, Medium Shot, Close-Up Shot, Tracking Shot, Aerial Shot
-        2. Camera Movements: Must include one of: dolly, pan, tilt, orbit, crane, track, zoom, push in, pull out
-        3. Visual Style: Maintain consistent color palette, lighting, and visual motifs
-        4. Scene Flow: Progress logically through the conversation topics
-
-        Structure:
-        1. First Prompt: Establishing shot that sets the scene and mood
-        2. Middle Prompts: Show key concepts and details
-        3. Final Prompt: Visually conclude and reinforce main message
-
-        Example Format:
-        "Establishing Shot: Modern research lab at dawn. Camera dolly forward through blue-lit corridors as holographic data visualizations float in the air. Soft ambient lighting creates an atmosphere of scientific discovery."
+        return f"""Create {num} detailed video prompts that directly visualize the key moments from this podcast conversation.
+        Each prompt should create a clear, engaging scene that illustrates what the hosts are discussing.
 
         Podcast Script:
         {script}
 
-        Return exactly {num} prompts in a JSON array of strings, each following the specified format.
-        
-        No ```json or ```python code blocks. No intro, no explanation, no commentary. Only JSON output."""
-    
+        Guidelines for Each Prompt:
+        1. Scene Content:
+           - Focus on the specific topic being discussed
+           - Show real environments and objects
+           - Include relevant details mentioned by hosts
+           - Capture the scale and impact of concepts
+           - Add human elements when appropriate
+
+        2. Visual Style:
+           - Professional documentary/educational style
+           - Clean, high-quality visuals
+           - Natural or appropriate lighting
+           - Clear focal points
+           - Engaging camera angles
+
+        3. Required Structure:
+           Each prompt must follow this format:
+           "A [specific location/setting] shows [main subject/action], while [supporting details/context]. [Human elements] [interact with/demonstrate/observe] [key concept]. [Lighting and atmosphere] highlights [important aspects]. [Perspective] is [specific viewpoint]. Extra important details: [specific details]."
+
+        4. Key Points:
+           - Be specific and detailed
+           - Use concrete imagery
+           - Match the conversation flow
+           - Show cause and effect
+           - Illustrate concepts clearly
+
+        Example Prompt (never use this exact wording):
+        "A modern research laboratory shows scientists working with advanced robotics equipment, while holographic displays show real-time data. Engineers in white coats carefully adjust mechanical components as automated systems move precisely in the background. Bright, clean lighting highlights the cutting-edge technology and focused atmosphere."
+
+        Instructions:
+        1. Read through the podcast section by section
+        2. Identify key topics and concepts
+        3. Create prompts that match the discussion flow
+        4. Include specific details from the conversation
+        5. Make each scene informative and engaging
+        6. Ensure visuals support the audio content
+
+        Return a properly formatted JSON array of strings like this:
+        [
+            "First detailed scene description...",
+            "Second detailed scene description...",
+            "Third detailed scene description..."
+        ]
+
+        Important: Use double quotes for strings and ensure valid JSON format.
+        No code blocks or explanations, only the JSON array."""
+
     try:
-        prompts = json.loads(get_video_prompts(podcast_script, num_segments))
+        # Generate prompts and ensure valid JSON
+        response = get_video_prompts(podcast_script, num_segments)
+        
+        # Parse JSON
+        prompts = json.loads(response)
+        
         if not isinstance(prompts, list) or len(prompts) != num_segments:
             raise ValueError(f"Invalid prompt format - must be array of exactly {num_segments} strings")
         
-        # Required elements
-        shot_types = [
-            "establishing shot", "wide shot", "medium shot", 
-            "close-up shot", "tracking shot", "aerial shot"
-        ]
-        camera_movements = [
-            "dolly", "pan", "tilt", "orbit", "crane", 
-            "track", "zoom", "push in", "pull out"
-        ]
-        
+        # Validate prompts
         for i, prompt in enumerate(prompts, 1):
             if not isinstance(prompt, str):
                 raise ValueError(f"Prompt {i} must be a string")
-            
-            prompt_lower = prompt.lower()
-            
-            # Check shot type at start
-            if not any(prompt_lower.startswith(shot.lower()) for shot in shot_types):
-                raise ValueError(f"Prompt {i} must start with a valid shot type")
-                        
-            # Check format sections
-            parts = prompt.split(". ")
-            if len(parts) < 3 or not parts[0].count(":") == 1:
-                raise ValueError(f"Prompt {i} must follow format: 'Shot: Scene. Camera Movement. Mood.'")
+            if len(prompt.split()) < 20:  # Ensure sufficient detail
+                raise ValueError(f"Prompt {i} is too short - needs more detail")
         
         return prompts
         
+    except json.JSONDecodeError as e:
+        print_error(f"Error parsing JSON response: {e}")
+        print_error(f"Raw response: {response[:200]}...")  # Print first 200 chars of response
+        return None
     except Exception as e:
         print_error(f"Error generating video prompts: {e}")
         return None
 
-def upload_image_to_uguu(image_path):
+def upload_image_to_uguu(image_path, max_retries=3):
     """Upload image to uguu.se and get URL"""
     try:
         url = "https://uguu.se/upload"
-        with open(image_path, 'rb') as f:
-            files = {'files[]': f}
-            response = requests.post(url, files=files)
-            
-        if response.status_code != 200:
-            raise Exception(f"Upload failed with status {response.status_code}")
-            
-        # Response is JSON array with file info
-        result = response.json()
-        if not result or not isinstance(result, list) or not result[0].get('url'):
-            raise Exception("Invalid response format")
-            
-        return result[0]['url']
         
+        # Prepare the file with proper format
+        with open(image_path, 'rb') as f:
+            files = {
+                'files[]': (
+                    Path(image_path).name,
+                    f,
+                    'image/jpeg'
+                )
+            }
+            
+            # Try upload with retries
+            for attempt in range(max_retries):
+                try:
+                    response = requests.post(
+                        url, 
+                        files=files,
+                        timeout=30
+                    )
+                    
+                    if response.status_code != 200:
+                        print_error(f"Upload failed with status {response.status_code}")
+                        if attempt < max_retries - 1:
+                            time.sleep(1)
+                            continue
+                        return None
+                    
+                    # Parse JSON response
+                    try:
+                        result = response.json()
+                        if (result.get('success') and 
+                            isinstance(result.get('files'), list) and 
+                            result['files'] and 
+                            'url' in result['files'][0]):
+                            return result['files'][0]['url']
+                    except (ValueError, KeyError, AttributeError):
+                        # If JSON parsing fails or format is unexpected, try text response
+                        text = response.text.strip()
+                        if text.startswith('http'):
+                            return text
+                    
+                    print_error(f"Invalid response format: {response.text[:100]}")
+                    if attempt < max_retries - 1:
+                        time.sleep(1)
+                        continue
+                    return None
+                    
+                except requests.exceptions.RequestException as e:
+                    print_error(f"Upload attempt {attempt + 1} failed: {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(1)
+                        continue
+                    return None
+            
+            return None
+            
     except Exception as e:
         print_error(f"Error uploading image: {e}")
         return None
@@ -1019,12 +1091,12 @@ def generate_video_segments_with_luma(prompts, output_dir, base_images=None):
             # Set up generation parameters
             generation_params = {
                 "prompt": prompt,
-                "aspect_ratio": "16:9"
+                "aspect_ratio": "16:9",
+                "loop": False
             }
             
             # Add base image if available
             if base_images and i < len(base_images):
-                # Upload image to uguu.se and get URL
                 image_url = upload_image_to_uguu(base_images[i])
                 if not image_url:
                     print_error(f"Failed to upload image {i+1}, continuing without image")
@@ -1036,28 +1108,103 @@ def generate_video_segments_with_luma(prompts, output_dir, base_images=None):
                         }
                     }
             
-            # Create generation
-            generation = luma_client.generations.create(**generation_params)
+            # Try generation with retries and prompt regeneration
+            max_retries = 3
+            max_prompt_retries = 3
+            generation = None
             
-            # Poll for completion
-            completed = False
-            while not completed:
-                generation = luma_client.generations.get(id=generation.id)
-                if generation.state == "completed":
-                    completed = True
-                elif generation.state == "failed":
-                    print_error(f"Video generation failed: {generation.failure_reason}")
-                    return None
-                print_step(EMOJI_VIDEO, f"Generating segment {i+1}...", color=Fore.YELLOW)
-                time.sleep(3)
+            for prompt_attempt in range(max_prompt_retries):
+                try:
+                    # Create generation with retries
+                    for attempt in range(max_retries):
+                        try:
+                            generation = luma_client.generations.create(**generation_params)
+                            break
+                        except Exception as e:
+                            if attempt < max_retries - 1:
+                                print_error(f"Generation attempt {attempt + 1} failed: {e}, retrying...")
+                                time.sleep(2)
+                            else:
+                                raise
+                    
+                    if not generation:
+                        raise Exception("Failed to create generation after retries")
+                    
+                    # Poll for completion with timeout
+                    start_time = time.time()
+                    timeout = 300
+                    completed = False
+                    moderation_failed = False
+                    
+                    while not completed and time.time() - start_time < timeout:
+                        try:
+                            generation = luma_client.generations.get(id=generation.id)
+                            
+                            if generation.state == "completed":
+                                completed = True
+                                break
+                            elif generation.state == "failed":
+                                error_msg = getattr(generation, 'failure_reason', 'Unknown error')
+                                if "moderation failed" in error_msg.lower():
+                                    moderation_failed = True
+                                    break
+                                raise Exception(f"Video generation failed: {error_msg}")
+                            elif generation.state == "canceled":
+                                raise Exception("Video generation was cancelled")
+                            else:
+                                print_step(EMOJI_VIDEO, f"Generating segment {i+1}...", color=Fore.YELLOW)
+                                time.sleep(3)
+                                
+                        except Exception as e:
+                            print_error(f"Error checking generation status: {e}")
+                            time.sleep(3)
+                    
+                    if moderation_failed:
+                        if prompt_attempt < max_prompt_retries - 1:
+                            print_error("Moderation failed, regenerating prompt...")
+                            # Regenerate prompt for this segment
+                            new_prompts = generate_video_segments(podcast_script, num_segments=1)
+                            if new_prompts and len(new_prompts) > 0:
+                                generation_params["prompt"] = new_prompts[0]
+                                continue
+                        raise Exception("Failed to generate acceptable prompt after retries")
+                    
+                    if not completed:
+                        raise Exception(f"Generation timed out after {timeout} seconds")
+                    
+                    # If we get here, generation was successful
+                    break
+                    
+                except Exception as e:
+                    if prompt_attempt < max_prompt_retries - 1:
+                        print_error(f"Prompt attempt {prompt_attempt + 1} failed: {e}, trying new prompt...")
+                        continue
+                    raise
             
-            # Download video
-            output_path = output_dir / f"segment_{i:02d}.mp4"
-            response = requests.get(generation.assets.video, stream=True)
-            with open(output_path, 'wb') as file:
-                file.write(response.content)
-            
-            video_paths.append(output_path)
+            # Download video with retries
+            max_download_retries = 3
+            for attempt in range(max_download_retries):
+                try:
+                    output_path = output_dir / f"segment_{i:02d}.mp4"
+                    response = requests.get(generation.assets.video, stream=True, timeout=30)
+                    response.raise_for_status()
+                    
+                    with open(output_path, 'wb') as file:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            file.write(chunk)
+                            
+                    if output_path.stat().st_size == 0:
+                        raise Exception("Downloaded file is empty")
+                        
+                    video_paths.append(output_path)
+                    break
+                    
+                except Exception as e:
+                    if attempt < max_download_retries - 1:
+                        print_error(f"Download attempt {attempt + 1} failed: {e}, retrying...")
+                        time.sleep(2)
+                    else:
+                        raise
             
         except Exception as e:
             print_error(f"Error generating video segment {i+1}: {e}")
@@ -1148,29 +1295,40 @@ def combine_audio_video(video_path, audio_path, output_path):
         fade_start = duration - 1  # Start fade 1 second before end
         
         # Create filter complex for fade out
-        video_filter = f"fade=t=out:st={fade_start}:d=1"  # 1 second fade to black
-        
-        # Use ffmpeg-python to combine video and audio with fade
-        input_video = ffmpeg.input(video_path)
-        input_audio = ffmpeg.input(audio_path)
-        
-        # Combine streams with fade effect
-        stream = ffmpeg.output(
-            input_video.filter(video_filter),
-            input_audio,
-            str(output_path),
-            acodec='aac',   # Use AAC for audio
-            strict='experimental'
+        # Apply fade filter directly to video stream
+        stream = (
+            ffmpeg
+            .input(video_path)
+            .filter('fade', type='out', start_time=fade_start, duration=1)
+            .output(
+                ffmpeg.input(audio_path),
+                str(output_path),
+                acodec='aac',
+                strict='experimental',
+                **{
+                    'filter_complex_threads': 1,
+                    'max_muxing_queue_size': 1024
+                }
+            )
         )
         
-        # Run ffmpeg
-        ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+        # Run ffmpeg with overwrite and error handling
+        try:
+            ffmpeg.run(
+                stream,
+                overwrite_output=True,
+                capture_stdout=True,
+                capture_stderr=True
+            )
+            return True
+            
+        except ffmpeg.Error as e:
+            if e.stderr:
+                print_error(f"FFmpeg error: {e.stderr.decode()}")
+            if e.stdout:
+                print_error(f"FFmpeg output: {e.stdout.decode()}")
+            return False
         
-        return True
-        
-    except ffmpeg.Error as e:
-        print_error(f"FFmpeg error: {e.stderr.decode()}")
-        return False
     except Exception as e:
         print_error(f"Error combining audio and video: {e}")
         return False
@@ -1308,24 +1466,31 @@ def calculate_num_segments(audio_duration, provider="luma"):
         "runway": 10  # RunwayML generates 10s videos
     }
     
+    # Provider-specific maximum segments
+    MAX_SEGMENTS = {
+        "luma": 10,   # Allow more segments for LumaAI due to shorter duration
+        "runway": 5   # Keep RunwayML at 5 segments max
+    }
+    
     segment_duration = SEGMENT_DURATIONS.get(provider, 5)  # Default to 5s if provider unknown
+    max_segments = MAX_SEGMENTS.get(provider, 5)  # Default to 5 if provider unknown
     
     # Calculate ideal number of segments to cover the audio
     ideal_segments = math.ceil(audio_duration / segment_duration)
     
-    # Keep segments between 2 and 5 for coherent storytelling
+    # Keep segments between 2 and max_segments
     if audio_duration <= segment_duration:
         # Very short audio - single segment
         return 1
     elif audio_duration <= 2 * segment_duration:
         # Short audio - two segments
         return 2
-    elif audio_duration <= 5 * segment_duration:
+    elif audio_duration <= max_segments * segment_duration:
         # Medium audio - scale segments based on duration
-        return min(5, max(2, ideal_segments))
+        return min(max_segments, max(2, ideal_segments))
     else:
-        # Long audio - cap at 5 segments
-        return 5
+        # Long audio - cap at max_segments
+        return max_segments
 
 def calculate_target_length(duration_seconds):
     """Calculate target word counts based on content duration"""
@@ -1343,25 +1508,88 @@ def calculate_target_length(duration_seconds):
     }
 
 def generate_image_prompts(video_prompts):
-    """Convert video prompts to Flux-compatible image prompts"""
+    """Generate relevant, concrete image prompts that match podcast content"""
+    
     @ell.simple(model="claude-3-5-sonnet-20241022", temperature=0.3, max_tokens=2048)
-    def get_image_prompts(prompts: list) -> str:
-        return f"""Convert these video scene descriptions into detailed Stable Diffusion style prompts for still images.
-        Each prompt should:
-        1. Be highly detailed (up to 512 tokens)
-        2. Include specific artistic style, lighting, and atmosphere
-        3. Focus on the scene setup without camera movements
-        4. Use Stable Diffusion keywords (masterpiece, highly detailed, etc.)
-        5. Maintain visual consistency across all images
-        
-        Video Prompts:
-        {json.dumps(prompts, indent=2)}
-        
-        Return a JSON array of image prompts, one for each video prompt.
-        No code blocks or explanations, just the JSON array."""
+    def get_image_prompts(prompts: list, summary: str, podcast: str) -> str:
+        return f"""Create {len(prompts)} detailed image prompts for Stable Diffusion that illustrate the key topics being discussed.
+        Each prompt should create a clear, realistic visualization of the concepts, using concrete imagery.
+
+        Content Summary:
+        {summary}
+
+        Podcast Script:
+        {podcast}
+
+        Required Elements for Each Prompt:
+        1. Base Quality:
+           - Start with: "masterpiece, highly detailed, 8k uhd, photorealistic"
+           - End with: "professional lighting, cinematic composition"
+
+        2. Scene Components:
+           - Main Subject: Primary topic or concept being discussed
+           - Environment: Relevant setting or location
+           - Supporting Elements: Objects, tools, or items that relate to the topic
+           - Human Element: People, hands, or human presence when relevant
+           - Scale: Show size and scope of the subject matter
+
+        3. Visual Guidelines:
+           - Create documentary-style scenes
+           - Show real objects and environments
+           - Include relevant details from the discussion
+           - Use appropriate lighting for the setting
+           - Choose engaging camera angles
+           - Keep scenes grounded and realistic
+
+        4. Scene Types:
+           - Process/Action: Show something being done or created
+           - Location/Setting: Establish where something happens
+           - Object/Detail: Focus on specific items being discussed
+           - Interaction: Show how things or people work together
+           - Result/Impact: Visualize outcomes or effects
+
+        Instructions:
+        1. Read the current section of discussion
+        2. Identify the main concept or point
+        3. Choose the most appropriate scene type
+        4. Include specific details mentioned in the content
+        5. Make it concrete and photorealistic
+        6. Ensure it matches the topic being discussed
+
+        Example Structure:
+        "masterpiece, highly detailed, 8k uhd, photorealistic, [main subject in action/setting], [environment details], [supporting elements], [human presence if relevant], [lighting and atmosphere], professional lighting, cinematic composition"
+
+        Return a JSON array of {len(prompts)} strings.
+        No code blocks, only the JSON array."""
     
     try:
-        return json.loads(get_image_prompts(video_prompts))
+        # Read the summary and podcast files for context
+        summary_file = next(Path("out").glob("summary-*.txt"))
+        podcast_file = next(Path("out").glob("podcast-*.txt"))
+        summary = summary_file.read_text()
+        podcast = podcast_file.read_text()
+        
+        # Generate prompts with content context
+        prompts = json.loads(get_image_prompts(video_prompts, summary, podcast))
+        
+        # Validate prompts
+        if not isinstance(prompts, list) or len(prompts) != len(video_prompts):
+            raise ValueError(f"Invalid prompt format - must be array of exactly {len(video_prompts)} strings")
+            
+        # Ensure all prompts are strings and have required elements
+        prompts = [str(p) for p in prompts]
+        
+        # Validate prompt structure
+        for i, prompt in enumerate(prompts):
+            if not isinstance(prompt, str):
+                raise ValueError(f"Prompt {i} must be a string")
+            if not prompt.startswith("masterpiece, highly detailed, 8k uhd, photorealistic"):
+                raise ValueError(f"Prompt {i} must start with the required quality elements")
+            if not prompt.endswith("professional lighting, cinematic composition"):
+                raise ValueError(f"Prompt {i} must end with the required composition elements")
+        
+        return prompts
+        
     except Exception as e:
         print_error(f"Error generating image prompts: {e}")
         return None
@@ -1453,176 +1681,182 @@ def main():
     try:
         # Clean and validate URL
         clean_url = clean_youtube_url(args.url)
-    except ValueError as e:
-        print_error(str(e))
-        sys.exit(1)
-    except Exception as e:
-        print_error(f"Error processing URL: {e}")
-        sys.exit(1)
-    
-    # Get video ID for filenames
-    try:
-        video_id = clean_url.split('v=')[1].split('&')[0]
-    except:
-        print_error("Could not extract video ID from URL")
-        sys.exit(1)
-    
-    # Get video metadata first
-    try:
-        metadata = get_video_metadata(clean_url)
-    except Exception as e:
-        print_error(f"Error processing metadata: {e}")
-        metadata = ""  # Continue without metadata
-    
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_dir = Path(temp_dir)
-        audio_path = temp_dir / "audio.m4a"
-        base_path = temp_dir / "audio"
         
-        # Try YouTube subtitles first (unless --ignore-subs is used)
-        transcript = None
-        if not args.ignore_subs:
-            subtitle_language = args.language.lower() if args.language else "en"
-            subtitle_file = get_youtube_subtitles(clean_url, str(base_path), subtitle_language)
-            
-            if subtitle_file:
-                # Read the subtitle file
-                with open(subtitle_file, 'r', encoding='utf-8') as f:
-                    transcript = f.read()
-                # Clean up the downloaded subtitle file
-                os.remove(subtitle_file)
-        
-        # If no transcript yet (no subs or --ignore-subs), transcribe audio
-        if not transcript:
-            method = ('Fast Whisper' if args.fast_whisper 
-                     else 'OpenAI Whisper' if args.whisper 
-                     else 'Incredibly Fast Whisper' if args.replicate
-                     else 'Fast Whisper')  # Default
-            print_step(EMOJI_TRANSCRIBE, f"Using {method} for transcription...")
-            
-            if not download_video(clean_url, str(audio_path)):
-                sys.exit(1)
-            
-            if not transcribe_video(str(audio_path), 
-                                  use_fast_whisper=args.fast_whisper or (not args.whisper and not args.replicate),
-                                  use_replicate=args.replicate,
-                                  language=args.language):
-                sys.exit(1)
-                
-            transcript = (temp_dir / "audio.txt").read_text()
-        
-        # Convert to shorthand
-        shorthand = to_shorthand(transcript)
-        
-        # Get video duration for length calculations
-        duration = None
-        if metadata:
-            try:
-                duration = float(re.search(r'Duration: (\d+\.\d+)', metadata).group(1))
-            except:
-                pass
-        
-        # Generate summary with appropriate length
-        summary = summarize_with_claude(shorthand, metadata, args.language)
-        if not summary:
+        # Get video ID for filenames
+        try:
+            video_id = clean_url.split('v=')[1].split('&')[0]
+        except:
+            print_error("Could not extract video ID from URL")
             sys.exit(1)
         
-        # Save summary
-        output_file = OUTPUT_DIR / f"summary-{video_id}.txt"
-        Path(output_file).write_text(metadata + summary)
-        print_success(f"Summary saved to {output_file}")
+        # Check for existing files
+        summary_file = OUTPUT_DIR / f"summary-{video_id}.txt"
+        podcast_script_file = OUTPUT_DIR / f"podcast-{video_id}.txt"
+        podcast_audio_file = OUTPUT_DIR / f"podcast-{video_id}.mp3"
+        final_video_file = OUTPUT_DIR / f"video-{video_id}.mp4"
         
-        # Convert to podcast script
-        if args.podcast:
-            podcast_script = convert_to_podcast_script(summary, args.language, duration)
-            if not podcast_script:
-                sys.exit(1)
+        # Get video metadata first (always do this to verify video exists)
+        try:
+            metadata = get_video_metadata(clean_url)
+            # Get video duration from metadata
+            duration = None
+            if metadata:
+                try:
+                    duration = float(re.search(r'Duration: (\d+\.\d+)', metadata).group(1))
+                except:
+                    pass
+        except Exception as e:
+            print_error(f"Error processing metadata: {e}")
+            metadata = ""  # Continue without metadata
+            duration = None
+        
+        # Check if we need to generate summary
+        if summary_file.exists():
+            print_step(EMOJI_SUCCESS, f"Summary already exists at {summary_file}")
+            summary = summary_file.read_text()
+        else:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_dir = Path(temp_dir)
+                audio_path = temp_dir / "audio.m4a"
+                base_path = temp_dir / "audio"
                 
-            # Generate audio file
-            audio_file = OUTPUT_DIR / f"podcast-{video_id}.mp3"
-            if not generate_podcast_audio(podcast_script, audio_file):
-                sys.exit(1)
-            
-            # Save podcast script
-            script_file = OUTPUT_DIR / f"podcast-{video_id}.txt"
-            Path(script_file).write_text(podcast_script)
-            
-            print_success(f"Podcast script saved to {script_file}")
-            print_success(f"Podcast audio saved to {audio_file}")
+                # Try YouTube subtitles first (unless --ignore-subs is used)
+                transcript = None
+                if not args.ignore_subs:
+                    subtitle_language = args.language.lower() if args.language else "en"
+                    subtitle_file = get_youtube_subtitles(clean_url, str(base_path), subtitle_language)
+                    
+                    if subtitle_file:
+                        # Read the subtitle file
+                        with open(subtitle_file, 'r', encoding='utf-8') as f:
+                            transcript = f.read()
+                        # Clean up the downloaded subtitle file
+                        os.remove(subtitle_file)
+                
+                # If no transcript yet (no subs or --ignore-subs), transcribe audio
+                if not transcript:
+                    method = ('Fast Whisper' if args.fast_whisper 
+                             else 'OpenAI Whisper' if args.whisper 
+                             else 'Incredibly Fast Whisper' if args.replicate
+                             else 'Fast Whisper')  # Default
+                    print_step(EMOJI_TRANSCRIBE, f"Using {method} for transcription...")
+                    
+                    if not download_video(clean_url, str(audio_path)):
+                        sys.exit(1)
+                    
+                    if not transcribe_video(str(audio_path), 
+                                          use_fast_whisper=args.fast_whisper or (not args.whisper and not args.replicate),
+                                          use_replicate=args.replicate,
+                                          language=args.language):
+                        sys.exit(1)
+                    
+                    transcript = (temp_dir / "audio.txt").read_text()
+                
+                # Convert to shorthand
+                shorthand = to_shorthand(transcript)
+                
+                # Generate summary with appropriate length
+                summary = summarize_with_claude(shorthand, metadata, args.language)
+                if not summary:
+                    sys.exit(1)
+                
+                # Save summary
+                Path(summary_file).write_text(metadata + summary)
+                print_success(f"Summary saved to {summary_file}")
         
-        if args.lumaai or args.runwayml:
-            if not args.podcast:
-                print_error("Video generation requires --podcast option")
-                sys.exit(1)
-            
-            # Create temporary directory for video segments
-            video_temp_dir = OUTPUT_DIR / "temp_videos"
-            video_temp_dir.mkdir(exist_ok=True)
-            
-            temp_video = None
-            try:
-                # Read podcast script
-                script_file = OUTPUT_DIR / f"podcast-{video_id}.txt"
-                if not script_file.exists():
-                    print_error("Podcast script file not found")
+        # If podcast option is enabled
+        if args.podcast:
+            # Check if podcast files exist
+            if podcast_script_file.exists() and podcast_audio_file.exists():
+                print_step(EMOJI_SUCCESS, f"Podcast script already exists at {podcast_script_file}")
+                print_step(EMOJI_SUCCESS, f"Podcast audio already exists at {podcast_audio_file}")
+                podcast_script = podcast_script_file.read_text()
+            else:
+                # Convert to podcast script and generate audio
+                podcast_script = convert_to_podcast_script(summary, args.language, duration)
+                if not podcast_script:
                     sys.exit(1)
                     
-                podcast_script = script_file.read_text()
+                # Save podcast script
+                podcast_script_file.write_text(podcast_script)
                 
-                # Get podcast audio duration first
-                audio_duration = get_audio_duration(audio_file)
-                if not audio_duration:
-                    print_error("Could not determine podcast duration")
+                # Generate audio file
+                if not generate_podcast_audio(podcast_script, podcast_audio_file):
                     sys.exit(1)
                 
-                # Calculate number of segments needed
-                num_segments = calculate_num_segments(
-                    audio_duration, 
-                    provider="luma" if args.lumaai else "runway"
-                )
+                print_success(f"Podcast script saved to {podcast_script_file}")
+                print_success(f"Podcast audio saved to {podcast_audio_file}")
+            
+            # If video generation is enabled
+            if args.lumaai or args.runwayml:
+                # Check if final video exists
+                if final_video_file.exists():
+                    print_step(EMOJI_SUCCESS, f"Final video already exists at {final_video_file}")
+                    return
                 
-                # Generate video prompts
-                prompts = generate_video_segments(podcast_script, num_segments=num_segments)
-                if not prompts:
-                    sys.exit(1)
+                # Create temporary directory for video segments
+                video_temp_dir = OUTPUT_DIR / "temp_videos"
+                video_temp_dir.mkdir(exist_ok=True)
                 
-                # Generate base images with Flux
-                image_prompts = generate_image_prompts(prompts)
-                if not image_prompts:
-                    sys.exit(1)
-                
-                base_images = generate_flux_images(image_prompts, video_temp_dir)
-                if not base_images:
-                    sys.exit(1)
-                
-                # Generate video segments with selected provider
-                if args.lumaai:
-                    video_paths = generate_video_segments_with_luma(prompts, video_temp_dir, base_images)
-                else:  # args.runwayml
-                    video_paths = generate_video_segments_with_runway(prompts, video_temp_dir, base_images)
-                
-                if not video_paths:
-                    sys.exit(1)
-                
-                # Combine videos and match audio duration
-                video_file = OUTPUT_DIR / f"video-{video_id}.mp4"
-                temp_video = OUTPUT_DIR / f"temp-video-{video_id}.mp4"
-                
-                if not combine_video_segments(video_paths, audio_duration, temp_video):
-                    sys.exit(1)
-                
-                # Combine with podcast audio
-                if not combine_audio_video(temp_video, audio_file, video_file):
-                    sys.exit(1)
-                
-                print_success(f"Final video saved to {video_file}")
-                
-            finally:
-                # Clean up temporary files
-                if video_temp_dir.exists():
-                    shutil.rmtree(video_temp_dir)
-                if temp_video and temp_video.exists():
-                    os.remove(temp_video)
+                temp_video = None
+                try:
+                    # Get podcast audio duration
+                    audio_duration = get_audio_duration(podcast_audio_file)
+                    if not audio_duration:
+                        print_error("Could not determine podcast duration")
+                        sys.exit(1)
+                    
+                    # Calculate number of segments needed
+                    num_segments = calculate_num_segments(
+                        audio_duration, 
+                        provider="luma" if args.lumaai else "runway"
+                    )
+                    
+                    # Generate video prompts
+                    prompts = generate_video_segments(podcast_script, num_segments=num_segments)
+                    if not prompts:
+                        sys.exit(1)
+                    
+                    # Generate base images with Flux
+                    image_prompts = generate_image_prompts(prompts)
+                    if not image_prompts:
+                        sys.exit(1)
+                    
+                    base_images = generate_flux_images(image_prompts, video_temp_dir)
+                    if not base_images:
+                        sys.exit(1)
+                    
+                    # Generate video segments with selected provider
+                    if args.lumaai:
+                        video_paths = generate_video_segments_with_luma(prompts, video_temp_dir, base_images)
+                    else:  # args.runwayml
+                        video_paths = generate_video_segments_with_runway(prompts, video_temp_dir, base_images)
+                    
+                    if not video_paths:
+                        sys.exit(1)
+                    
+                    # Combine videos and match audio duration
+                    temp_video = OUTPUT_DIR / f"temp-video-{video_id}.mp4"
+                    
+                    if not combine_video_segments(video_paths, audio_duration, temp_video):
+                        sys.exit(1)
+                    
+                    # Combine with podcast audio
+                    if not combine_audio_video(temp_video, podcast_audio_file, final_video_file):
+                        sys.exit(1)
+                    
+                    print_success(f"Final video saved to {final_video_file}")
+                    
+                finally:
+                    # Clean up temporary files
+                    if video_temp_dir.exists():
+                        shutil.rmtree(video_temp_dir)
+                    if temp_video and temp_video.exists():
+                        os.remove(temp_video)
+
+    except KeyboardInterrupt:
+        print_error("\nOperation cancelled by user")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
