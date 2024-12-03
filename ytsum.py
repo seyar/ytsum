@@ -934,7 +934,7 @@ def generate_video_segments(podcast_script, num_segments=5, seed=42):
     @ell.simple(model="claude-3-5-sonnet-20241022", temperature=0.3, max_tokens=2048)
     def get_video_prompts(script: str, num: int) -> str:
         return f"""Create {num} detailed video prompts that directly visualize the key moments from this podcast conversation.
-        Each prompt should create a clear, engaging scene that illustrates what the hosts are discussing.
+        Each prompt must be under 500 characters long and create a clear, engaging scene.
 
         Podcast Script:
         {script}
@@ -944,47 +944,37 @@ def generate_video_segments(podcast_script, num_segments=5, seed=42):
            - Focus on the specific topic being discussed
            - Show real environments and objects
            - Include relevant details mentioned by hosts
-           - Capture the scale and impact of concepts
-           - Add human elements when appropriate
+           - Keep descriptions concise but clear
 
         2. Visual Style:
-           - Professional documentary/educational style
+           - Professional documentary style
            - Clean, high-quality visuals
-           - Natural or appropriate lighting
+           - Natural lighting
            - Clear focal points
-           - Engaging camera angles
 
-        3. Required Structure:
-           Each prompt must follow this format:
-           "A [specific location/setting] shows [main subject/action], while [supporting details/context]. [Human elements] [interact with/demonstrate/observe] [key concept]. [Lighting and atmosphere] highlights [important aspects]. [Perspective] is [specific viewpoint]. Extra important details: [specific details]."
+        3. Required Structure (keep under 500 chars):
+           "A [brief location] shows [main subject/action]. [Supporting details]. [Human elements] [interact with] [key concept]. [Lighting] highlights [focus]. [Camera angle]."
 
         4. Key Points:
-           - Be specific and detailed
+           - Be specific but concise
            - Use concrete imagery
-           - Match the conversation flow
-           - Show cause and effect
-           - Illustrate concepts clearly
-
-        Example Prompt (never use this exact wording):
-        "A modern research laboratory shows scientists working with advanced robotics equipment, while holographic displays show real-time data. Engineers in white coats carefully adjust mechanical components as automated systems move precisely in the background. Bright, clean lighting highlights the cutting-edge technology and focused atmosphere."
+           - Match the conversation
+           - Stay under length limit
 
         Instructions:
-        1. Read through the podcast section by section
-        2. Identify key topics and concepts
-        3. Create prompts that match the discussion flow
-        4. Include specific details from the conversation
-        5. Make each scene informative and engaging
-        6. Ensure visuals support the audio content
+        1. Read the section
+        2. Identify key concept
+        3. Create concise scene
+        4. Check character count
+        5. Trim if needed
 
         Return a properly formatted JSON array of strings like this:
         [
-            "First detailed scene description...",
-            "Second detailed scene description...",
-            "Third detailed scene description..."
+            "First scene (under 500 chars)...",
+            "Second scene (under 500 chars)..."
         ]
 
-        Important: Use double quotes for strings and ensure valid JSON format.
-        No code blocks or explanations, only the JSON array."""
+        Important: Use double quotes and ensure valid JSON format."""
 
     try:
         # Generate prompts and ensure valid JSON
@@ -996,18 +986,37 @@ def generate_video_segments(podcast_script, num_segments=5, seed=42):
         if not isinstance(prompts, list) or len(prompts) != num_segments:
             raise ValueError(f"Invalid prompt format - must be array of exactly {num_segments} strings")
         
-        # Validate prompts
+        # Validate and truncate prompts
+        MAX_LENGTH = 500  # Keep some buffer below 512
+        processed_prompts = []
+        
         for i, prompt in enumerate(prompts, 1):
             if not isinstance(prompt, str):
                 raise ValueError(f"Prompt {i} must be a string")
-            if len(prompt.split()) < 20:  # Ensure sufficient detail
+            
+            # Ensure minimum detail
+            if len(prompt.split()) < 20:
                 raise ValueError(f"Prompt {i} is too short - needs more detail")
+            
+            # Truncate if too long
+            if len(prompt) > MAX_LENGTH:
+                # Find last complete sentence that fits
+                sentences = prompt.split('.')
+                truncated = ''
+                for sentence in sentences:
+                    if len(truncated + sentence + '.') <= MAX_LENGTH:
+                        truncated += sentence + '.'
+                    else:
+                        break
+                prompt = truncated.strip()
+            
+            processed_prompts.append(prompt)
         
-        return prompts
+        return processed_prompts
         
     except json.JSONDecodeError as e:
         print_error(f"Error parsing JSON response: {e}")
-        print_error(f"Raw response: {response[:200]}...")  # Print first 200 chars of response
+        print_error(f"Raw response: {response[:200]}...")
         return None
     except Exception as e:
         print_error(f"Error generating video prompts: {e}")
@@ -1077,7 +1086,7 @@ def upload_image_to_uguu(image_path, max_retries=3):
         print_error(f"Error uploading image: {e}")
         return None
 
-def generate_video_segments_with_luma(prompts, output_dir, base_images=None):
+def generate_video_segments_with_luma(prompts, output_dir, base_images=None, podcast_script=None):
     """Generate video segments using LumaAI with optional base images"""
     if not luma_client:
         print_error("LUMA_API_KEY environment variable not set")
@@ -1148,6 +1157,13 @@ def generate_video_segments_with_luma(prompts, output_dir, base_images=None):
                                 if "moderation failed" in error_msg.lower():
                                     moderation_failed = True
                                     break
+                                # Add regeneration for any failure
+                                if prompt_attempt < max_prompt_retries - 1:
+                                    print_error(f"Generation failed: {error_msg}, regenerating prompt...")
+                                    new_prompts = generate_video_segments(podcast_script, num_segments=1)
+                                    if new_prompts and len(new_prompts) > 0:
+                                        generation_params["prompt"] = new_prompts[0]
+                                        break
                                 raise Exception(f"Video generation failed: {error_msg}")
                             elif generation.state == "canceled":
                                 raise Exception("Video generation was cancelled")
@@ -1333,7 +1349,7 @@ def combine_audio_video(video_path, audio_path, output_path):
         print_error(f"Error combining audio and video: {e}")
         return False
 
-def generate_video_segments_with_runway(prompts, output_dir, base_images=None, timeout=900):  # 15 min default timeout
+def generate_video_segments_with_runway(prompts, output_dir, base_images=None, timeout=900, podcast_script=None):
     """Generate video segments using RunwayML with optional base images"""
     if not runway_client:
         print_error("RUNWAYML_API_SECRET environment variable not set")
@@ -1344,114 +1360,153 @@ def generate_video_segments_with_runway(prompts, output_dir, base_images=None, t
         try:
             print_step(EMOJI_VIDEO, f"Generating video segment {i+1}/{len(prompts)}...")
             
-            # Use base image if available, otherwise create gradient
-            if base_images and i < len(base_images):
-                with open(base_images[i], 'rb') as f:
-                    image_bytes = f.read()
-                image_b64 = base64.b64encode(image_bytes).decode('utf-8')
-                image_uri = f"data:image/jpeg;base64,{image_b64}"
-            else:
-                temp_image = output_dir / f"input_{i:02d}.png"
-                gradient = create_gradient_image()
-                gradient.save(temp_image)
-                with open(temp_image, 'rb') as f:
-                    image_bytes = f.read()
-                image_b64 = base64.b64encode(image_bytes).decode('utf-8')
-                image_uri = f"data:image/png;base64,{image_b64}"
-                temp_image.unlink()
+            # Try generation with retries and prompt regeneration
+            max_retries = 3
+            max_prompt_retries = 3
             
-            # Create task with image URI
-            task = runway_client.image_to_video.create(
-                model='gen3a_turbo',
-                prompt_text=prompt,
-                prompt_image=image_uri,
-                duration=10,
-                ratio="1280:768"
-            )
-            
-            # Poll for completion with timeout
-            start_time = time.time()
-            max_retries = 180  # Maximum number of retries (15 min with 5s sleep)
-            retries = 0
-            
-            while retries < max_retries:
-                # Check timeout
-                if time.time() - start_time > timeout:
-                    print_error(f"Timeout after {timeout} seconds")
-                    try:
-                        runway_client.tasks.cancel(id=task.id)
-                    except:
-                        pass
-                    return None
-                
+            for prompt_attempt in range(max_prompt_retries):
                 try:
-                    task_status = runway_client.tasks.retrieve(id=task.id)
-                except Exception as e:
-                    print_error(f"Error retrieving task status: {e}")
-                    time.sleep(5)
-                    retries += 1
-                    continue
-                
-                # Handle all possible statuses
-                if task_status.status == "SUCCEEDED":
-                    if not hasattr(task_status, 'output') or not task_status.output:
-                        print_error("No output in completed task")
-                        return None
+                    # Use base image if available, otherwise create gradient
+                    if base_images and i < len(base_images):
+                        with open(base_images[i], 'rb') as f:
+                            image_bytes = f.read()
+                        image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+                        image_uri = f"data:image/jpeg;base64,{image_b64}"
+                    else:
+                        temp_image = output_dir / f"input_{i:02d}.png"
+                        gradient = create_gradient_image()
+                        gradient.save(temp_image)
+                        with open(temp_image, 'rb') as f:
+                            image_bytes = f.read()
+                        image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+                        image_uri = f"data:image/png;base64,{image_b64}"
+                        temp_image.unlink()
                     
-                    video_urls = task_status.output
-                    if not video_urls or not isinstance(video_urls, list):
-                        print_error("Invalid output format in task")
-                        return None
+                    # Create task with current prompt
+                    task = runway_client.image_to_video.create(
+                        model='gen3a_turbo',
+                        prompt_text=prompt,
+                        prompt_image=image_uri,
+                        duration=10,
+                        ratio="1280:768"
+                    )
                     
-                    video_url = video_urls[0]
+                    # Poll for completion with timeout
+                    start_time = time.time()
+                    max_retries = 180
+                    retries = 0
+                    moderation_failed = False
+                    
+                    while retries < max_retries:
+                        if time.time() - start_time > timeout:
+                            print_error(f"Timeout after {timeout} seconds")
+                            try:
+                                runway_client.tasks.cancel(id=task.id)
+                            except:
+                                pass
+                            return None
+                        
+                        try:
+                            task_status = runway_client.tasks.retrieve(id=task.id)
+                        except Exception as e:
+                            print_error(f"Error retrieving task status: {e}")
+                            time.sleep(5)
+                            retries += 1
+                            continue
+                        
+                        if task_status.status == "SUCCEEDED":
+                            if not hasattr(task_status, 'output') or not task_status.output:
+                                print_error("No output in completed task")
+                                return None
+                            
+                            video_urls = task_status.output
+                            if not video_urls or not isinstance(video_urls, list):
+                                print_error("Invalid output format in task")
+                                return None
+                            
+                            video_url = video_urls[0]
+                            break
+                            
+                        elif task_status.status == "FAILED":
+                            error_msg = getattr(task_status, 'failure', '') or getattr(task_status, 'failureCode', 'Unknown error')
+                            if "moderation" in error_msg.lower():
+                                moderation_failed = True
+                                break
+                            # Add regeneration for any failure
+                            if prompt_attempt < max_prompt_retries - 1:
+                                print_error(f"Generation failed: {error_msg}, regenerating prompt...")
+                                new_prompts = generate_video_segments(podcast_script, num_segments=1)
+                                if new_prompts and len(new_prompts) > 0:
+                                    prompt = new_prompts[0]  # Update prompt for next attempt
+                                    break
+                            print_error(f"Video generation failed: {error_msg}")
+                            return None
+                            
+                        elif task_status.status == "CANCELLED":
+                            print_error("Video generation was cancelled")
+                            return None
+                            
+                        elif task_status.status == "THROTTLED":
+                            print_step(EMOJI_VIDEO, f"Generation queued (throttled)... Attempt {retries+1}/{max_retries}", color=Fore.YELLOW)
+                            
+                        elif task_status.status == "PENDING":
+                            print_step(EMOJI_VIDEO, f"Generation pending... Attempt {retries+1}/{max_retries}", color=Fore.YELLOW)
+                            
+                        elif task_status.status == "RUNNING":
+                            progress = float(getattr(task_status, 'progress', 0) or 0) * 100
+                            elapsed = int(time.time() - start_time)
+                            print_step(EMOJI_VIDEO, 
+                                     f"Generating segment {i+1}... ({progress:.0f}%) - {elapsed}s elapsed", 
+                                     color=Fore.YELLOW)
+                        
+                        time.sleep(5)
+                        retries += 1
+                        continue
+                    
+                    if moderation_failed:
+                        if prompt_attempt < max_prompt_retries - 1:
+                            print_error("Moderation failed, regenerating prompt...")
+                            # Regenerate prompt for this segment
+                            new_prompts = generate_video_segments(podcast_script, num_segments=1)
+                            if new_prompts and len(new_prompts) > 0:
+                                prompt = new_prompts[0]  # Update prompt for next attempt
+                                break
+                            raise Exception("Failed to generate acceptable prompt after retries")
+                    
+                    # Download video with retries
+                    max_download_retries = 3
+                    for download_attempt in range(max_download_retries):
+                        try:
+                            output_path = output_dir / f"segment_{i:02d}.mp4"
+                            response = requests.get(video_url, stream=True, timeout=30)
+                            response.raise_for_status()
+                            
+                            with open(output_path, 'wb') as file:
+                                for chunk in response.iter_content(chunk_size=8192):
+                                    file.write(chunk)
+                                    
+                            if output_path.stat().st_size == 0:
+                                raise Exception("Downloaded file is empty")
+                                
+                            video_paths.append(output_path)
+                            break
+                            
+                        except Exception as e:
+                            if download_attempt < max_download_retries - 1:
+                                print_error(f"Download attempt {download_attempt + 1} failed: {e}, retrying...")
+                                time.sleep(2)
+                            else:
+                                raise
+                    
+                    # If we get here, generation and download were successful
                     break
                     
-                elif task_status.status == "FAILED":
-                    error_msg = getattr(task_status, 'failure', '') or getattr(task_status, 'failureCode', 'Unknown error')
-                    print_error(f"Video generation failed: {error_msg}")
-                    return None
+                except Exception as e:
+                    if prompt_attempt < max_prompt_retries - 1:
+                        print_error(f"Prompt attempt {prompt_attempt + 1} failed: {e}, trying new prompt...")
+                        continue
+                    raise
                     
-                elif task_status.status == "CANCELLED":
-                    print_error("Video generation was cancelled")
-                    return None
-                    
-                elif task_status.status == "THROTTLED":
-                    print_step(EMOJI_VIDEO, f"Generation queued (throttled)... Attempt {retries+1}/{max_retries}", color=Fore.YELLOW)
-                    
-                elif task_status.status == "PENDING":
-                    print_step(EMOJI_VIDEO, f"Generation pending... Attempt {retries+1}/{max_retries}", color=Fore.YELLOW)
-                    
-                elif task_status.status == "RUNNING":
-                    progress = float(getattr(task_status, 'progress', 0) or 0) * 100
-                    elapsed = int(time.time() - start_time)
-                    print_step(EMOJI_VIDEO, 
-                             f"Generating segment {i+1}... ({progress:.0f}%) - {elapsed}s elapsed", 
-                             color=Fore.YELLOW)
-                
-                time.sleep(5)
-                retries += 1
-            
-            else:  # Loop completed without break
-                print_error(f"Maximum retries ({max_retries}) reached")
-                try:
-                    runway_client.tasks.cancel(id=task.id)
-                except:
-                    pass
-                return None
-            
-            # Download video
-            try:
-                output_path = output_dir / f"segment_{i:02d}.mp4"
-                response = requests.get(video_url, stream=True, timeout=30)
-                response.raise_for_status()
-                with open(output_path, 'wb') as file:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        file.write(chunk)
-                video_paths.append(output_path)
-            except Exception as e:
-                print_error(f"Error downloading video: {e}")
-                return None
-            
         except Exception as e:
             print_error(f"Error generating video segment {i+1}: {e}")
             return None
@@ -1828,9 +1883,19 @@ def main():
                     
                     # Generate video segments with selected provider
                     if args.lumaai:
-                        video_paths = generate_video_segments_with_luma(prompts, video_temp_dir, base_images)
+                        video_paths = generate_video_segments_with_luma(
+                            prompts, 
+                            video_temp_dir, 
+                            base_images,
+                            podcast_script=podcast_script
+                        )
                     else:  # args.runwayml
-                        video_paths = generate_video_segments_with_runway(prompts, video_temp_dir, base_images)
+                        video_paths = generate_video_segments_with_runway(
+                            prompts, 
+                            video_temp_dir, 
+                            base_images,
+                            podcast_script=podcast_script
+                        )
                     
                     if not video_paths:
                         sys.exit(1)
