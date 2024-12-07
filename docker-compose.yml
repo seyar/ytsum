@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  ytsum:
+    build: .
+    container_name: ytsum
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data  # Optional: for persistent data storage
+    restart: unless-stopped
