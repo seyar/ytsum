@@ -7,7 +7,7 @@ Write in complete, grammatically structured sentences that flow conversationally
 
 Use **bold** for technical terms and concepts when first introduced, and *italics* for emphasis or to highlight key phrases. Create visual hierarchy through:
 
-1. Clear paragraph breaks for major concept transitions
+1. Clear long paragraph breaks for major concept transitions
 2. Strategic use of blockquotes for definitions and key insights
 3. Bold terms for technical vocabulary
 4. Italics for emphasis and nuance
@@ -27,11 +27,11 @@ Please follow these steps to create your summary:
 3. Translate the content into {language}.
 4. Analyze the content of the interview, focusing on:
    - Identifying the main topics discussed
-   - Extracting 2-3 key quotes and their significance
+   - Extracting 4-5 key quotes and their significance
    - Determining the most important theme or topic
    - Choosing the single most pertinent aspect of the interview
 
-5. Draft a summary focusing on this key point, aiming for 1-2 sentences.
+5. Draft a summary focusing on this key point, aiming for 3-4 sentences.
 6. Refine your summary to be as concise and readable as possible while maintaining the essence of the most important information.
 
 Before providing your final summary, wrap your analysis process under ## Detailed Breakdown. This should include:
@@ -46,11 +46,11 @@ Before providing your final summary, wrap your analysis process under ## Detaile
 
 Your final summary should be under "## Summary". Remember, it must be:
 - In {language} (if language is not english, translate the summary)
-- 1-3 sentences long
+- 2-5-sentence long
 - Brief and terse
 - Basic telegraphic style
 - Focused on the most pertinent information
-- Quoting 1-2 key short quotes from the transcript
+- Quoting 2-4 key short quotes from the transcript
 - Include interesting facts to add substance
 
 Use clear, precise language and avoid unnecessary jargon. Your goal is to grasp the overall ideas and convey them efficiently to the reader.
@@ -58,5 +58,7 @@ Use clear, precise language and avoid unnecessary jargon. Your goal is to grasp 
 This task is of utmost importance. Approach it with the utmost care and attention to detail.
 
 Everything you write must be in {language}.
+
+Maximum 10000-character long.
 
 No intro, no outro, no XML tags, just the well-formatted Markdown output. 

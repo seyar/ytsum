@@ -981,27 +981,58 @@ def test_calculate_target_length():
     assert short['summary'] < medium['summary'] < long['summary']
     assert short['podcast'] < medium['podcast'] < long['podcast']
 
-def test_upload_image_to_uguu_success(temp_dir, mocker, mock_uguu_response):
+def test_upload_image_to_uguu_success(temp_dir, mocker):
     """Test successful image upload to Uguu"""
     # Create test image
     test_image = temp_dir / "test.jpg"
     test_image.write_bytes(b"fake image data")
     
-    # Mock requests.post
-    mock_post = mocker.patch('requests.post', return_value=mock_uguu_response)
+    # Test different response formats
+    response_formats = [
+        # JSON success format
+        ({
+            'success': True,
+            'files': [{
+                'hash': '123abc',
+                'name': 'test.jpg',
+                'url': 'https://uguu.se/files/test.jpg',
+                'size': 1234
+            }]
+        }, 'https://uguu.se/files/test.jpg'),
+        # Direct URL format (fallback)
+        ('https://uguu.se/files/test.jpg', 'https://uguu.se/files/test.jpg')
+    ]
     
-    # Test upload
-    result = upload_image_to_uguu(test_image)
-    
-    # Verify result
-    assert result == 'https://uguu.se/files/example.jpg'
-    
-    # Verify API call
-    mock_post.assert_called_once()
-    args, kwargs = mock_post.call_args
-    assert args[0] == 'https://uguu.se/upload'
-    assert 'files' in kwargs
-    assert 'files[]' in kwargs['files']
+    for response_data, expected_url in response_formats:
+        # Mock response
+        mock_response = mocker.MagicMock()
+        mock_response.status_code = 200
+        
+        if isinstance(response_data, dict):
+            mock_response.json.return_value = response_data
+            mock_response.text = json.dumps(response_data)
+        else:
+            mock_response.json.side_effect = ValueError("Not JSON")
+            mock_response.text = response_data
+        
+        # Mock requests.post
+        mock_post = mocker.patch('requests.post', return_value=mock_response)
+        
+        # Test upload
+        result = upload_image_to_uguu(test_image)
+        
+        # Verify result
+        assert result == expected_url
+        
+        # Verify API call
+        mock_post.assert_called_once()
+        args, kwargs = mock_post.call_args
+        assert args[0] == 'https://uguu.se/upload'
+        assert 'files' in kwargs
+        assert 'files[]' in kwargs['files']
+        
+        # Reset mocks
+        mock_post.reset_mock()
 
 def test_upload_image_to_uguu_http_error(temp_dir, mocker):
     """Test Uguu upload with HTTP error"""
