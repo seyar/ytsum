@@ -8,4 +8,12 @@ services:
       - .env
     volumes:
       - ./data:/app/data  # Optional: for persistent data storage
+      - ./out:/app/out
     restart: unless-stopped
+    networks:
+      - traefik
+
+networks:
+  traefik:
+    name: traefik
+    external: true

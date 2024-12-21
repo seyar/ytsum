@@ -4,6 +4,7 @@ yt-dlp
 colorama
 replicate
 ell-ai
+sqlmodel
 faster-whisper
 lumaai
 ffmpeg-python
@@ -11,3 +12,6 @@ pytest
 pytest-mock
 pytest-asyncio
 pytest-timeout>=2.1.0
+runwayml
+flask
+requests

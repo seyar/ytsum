@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>YouTube Video Processor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .result {
+            white-space: pre-wrap;
+            background: #f5f5f5;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 5px;
+        }
+        #loading {
+            display: none;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <h1>YouTube Video Processor</h1>
+
+    <div class="form-group">
+        <label for="url">YouTube URL:</label><br>
+        <input type="text" id="url" style="width: 100%">
+    </div>
+
+    <div class="form-group">
+        <label for="language">Language:</label><br>
+        <input type="text" id="language" value="english">
+    </div>
+
+    <div class="form-group">
+        <input type="checkbox" id="podcast">
+        <label for="podcast">Generate Podcast</label>
+    </div>
+
+    <div class="form-group">
+        <label>Video Generation:</label><br>
+        <input type="radio" name="video" id="none" value="none" checked>
+        <label for="none">None</label>
+        <input type="radio" name="video" id="lumaai" value="lumaai">
+        <label for="lumaai">Luma AI</label>
+        <input type="radio" name="video" id="runwayml" value="runwayml">
+        <label for="runwayml">RunwayML</label>
+    </div>
+
+    <button onclick="processVideo()">Process Video</button>
+
+    <div id="loading">Processing... This may take several minutes.</div>
+    <div id="result" class="result"></div>
+
+    <script>
+        async function processVideo() {
+            const url = document.getElementById('url').value;
+            const language = document.getElementById('language').value;
+            const podcast = document.getElementById('podcast').checked;
+            const videoType = document.querySelector('input[name="video"]:checked').value;
+
+            if (!url) {
+                alert('Please enter a YouTube URL');
+                return;
+            }
+
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('result').innerHTML = '';
+
+            try {
+                const response = await fetch('/process', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        url,
+                        language,
+                        podcast,
+                        video_type: videoType === 'none' ? null : videoType
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    document.getElementById('result').innerHTML = `Error: ${data.error}`;
+                } else {
+                    let result = `Summary:\n${data.summary}\n\n`;
+                    result += 'Generated files:\n';
+                    for (const [key, path] of Object.entries(data.files)) {
+                        result += `${key}: ${path}\n`;
+                    }
+                    document.getElementById('result').innerHTML = result;
+                }
+            } catch (error) {
+                document.getElementById('result').innerHTML = `Error: ${error.message}`;
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>

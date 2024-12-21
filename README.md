@@ -150,6 +150,17 @@ pytest -v -m runway
 - `colorama`: Terminal output formatting
 - `pytest`: Testing framework
 
+## Docker
+
+```bash
+docker build -t ytsum .
+docker run -it ytsum
+```
+
+```bash
+docker compose run ytsum python ytsum.py --podcast --lumaai 'https://www.youtube.com/watch?v=VIDEO_ID'
+```
+
 ## Contributing
 
 1. Fork the repository

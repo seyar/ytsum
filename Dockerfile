@@ -1,10 +1,22 @@
-FROM python:3.9-alpine
+# Build stage
+FROM python:3.11-slim
 
-RUN apk add --no-cache \
-    ffmpeg
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    pkg-config \
+    gcc \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
+RUN pip install --upgrade pip
+
+COPY requirements.txt .
+# Install dependencies using the built wheels
 RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["python", "main.py"]
+COPY . .
+
+CMD ["python", "app.py"]
