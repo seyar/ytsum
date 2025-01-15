@@ -28,29 +28,6 @@ import math
 # Initialize colorama
 init()
 
-# Initialize Anthropic client and register with Ell
-api_key = os.getenv("ANTHROPIC_API_KEY")
-if not api_key:
-    print_error("ANTHROPIC_API_KEY environment variable not set")
-    sys.exit(1)
-
-claude_client = Anthropic()
-ell.config.register_model("claude-3-5-sonnet-20241022", claude_client)
-
-# Initialize LumaAI client
-luma_api_key = os.getenv("LUMAAI_API_KEY")
-if luma_api_key:
-    luma_client = LumaAI(auth_token=luma_api_key)
-else:
-    luma_client = None
-
-# Initialize RunwayML client
-runway_api_key = os.getenv("RUNWAYML_API_SECRET")
-if runway_api_key:
-    runway_client = RunwayML()
-else:
-    runway_client = None
-
 # Emoji constants
 EMOJI_DOWNLOAD = "⬇️ "
 EMOJI_TRANSCRIBE = "🎯 "
@@ -78,6 +55,29 @@ AVAILABLE_VOICES = {
     "nova": "Female voice",
     "shimmer": "Female voice"
 }
+
+# Initialize Anthropic client and register with Ell
+api_key = os.getenv("ANTHROPIC_API_KEY")
+if not api_key:
+    print(f"{Fore.RED}{EMOJI_ERROR}ANTHROPIC_API_KEY environment variable not set{Style.RESET_ALL}")
+    sys.exit(1)
+
+claude_client = Anthropic()
+ell.config.register_model("claude-3-5-sonnet-20241022", claude_client)
+
+# Initialize LumaAI client
+luma_api_key = os.getenv("LUMAAI_API_KEY")
+if luma_api_key:
+    luma_client = LumaAI(auth_token=luma_api_key)
+else:
+    luma_client = None
+
+# Initialize RunwayML client
+runway_api_key = os.getenv("RUNWAYML_API_SECRET")
+if runway_api_key:
+    runway_client = RunwayML()
+else:
+    runway_client = None
 
 # Add after OpenAI client initialization
 # Create output directory if it doesn't exist
@@ -522,7 +522,7 @@ def summarize_with_claude(transcript, metadata="", language="english"):
         print_error(f"Error generating summary: {e}")
         return None
 
-def get_video_metadata(url):
+def get_video_metadata(url, language=None):
     """Get video metadata using yt-dlp"""
     try:
         clean_url = clean_youtube_url(url)
@@ -557,13 +557,14 @@ def get_video_metadata(url):
 
         if description := metadata.get('description'):
             # Process description with Ell
-            processed = process_metadata_description(description)
+            processed = process_metadata_description(description, language)
+            # processed = description
             header_parts.append(f"Description: {processed}")
 
-        if tags := metadata.get('tags'):
-            # Process tags with Ell
-            processed_tags = process_metadata_description(' '.join(tags))
-            header_parts.append(f"Tags: {processed_tags}")
+        # if tags := metadata.get('tags'):
+        #     # Process tags with Ell
+        #     processed_tags = process_metadata_description(' '.join(tags))
+        #     header_parts.append(f"Tags: {processed_tags}")
 
         header_parts.extend(["---", ""])
 
@@ -608,7 +609,7 @@ def convert_audio_format(input_path, output_format='mp3', bitrate='192k', mono=F
         print_error(f"Audio conversion error: {e}")
         return None
 
-def process_metadata_description(metadata):
+def process_metadata_description(metadata, language=None):
     """Process metadata description using Ell"""
 
     @ell.simple(model="claude-3-5-sonnet-20241022", temperature=0.3, max_tokens=1000)
@@ -621,7 +622,8 @@ def process_metadata_description(metadata):
         4. Focus only on plot/content-relevant information
         5. Use semicolons to separate multiple plot points
         6. Group related tags inside parentheses
-        7. Exclude generic/redundant tags"""
+        7. Exclude generic/redundant tags
+        8. If it's a recipie of cooking include written ingridients and recipie itself"""
 
         return f"""Process this video metadata into a concise format:
 1. Extract main plot points (max 3, separated by semicolons)
@@ -629,6 +631,8 @@ def process_metadata_description(metadata):
 
 Metadata:
 {content}
+
+Everything you write must be in {language}.
 
 Format output as:
 Description: [plot point 1]; [plot point 2]; [plot point 3]
@@ -1693,7 +1697,8 @@ def main():
 
         # Get video metadata first (always do this to verify video exists)
         try:
-            metadata = get_video_metadata(clean_url)
+            lang = subtitle_language = args.language.lower() if args.language else "english"
+            metadata = get_video_metadata(clean_url, lang)
             # Get video duration from metadata
             duration = None
             if metadata:

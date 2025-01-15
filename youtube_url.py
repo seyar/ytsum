@@ -37,7 +37,7 @@ def clean_youtube_url(url):
         video_id = url.strip('/')
 
     # Validate video ID format (11 characters, alphanumeric and -_)
-    if not video_id or not re.match(r'^[A-Za-z0-9_-]{11}$', video_id):
+    if not video_id or not re.match(r'^[A-Za-z0-9_-]{11,12}$', video_id):
         raise ValueError(f"Invalid YouTube video ID: {video_id}")
 
     # Check if video exists
