@@ -559,7 +559,7 @@ def get_video_metadata(url, language=None):
             # Process description with Ell
             processed = process_metadata_description(description, language)
             # processed = description
-            header_parts.append(f"Description: {processed}")
+            header_parts.append(f"{processed}")
 
         # if tags := metadata.get('tags'):
         #     # Process tags with Ell
