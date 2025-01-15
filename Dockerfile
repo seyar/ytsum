@@ -19,4 +19,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+RUN ["echo", "run app.py tests"]
+RUN python -m unittest /app/test_app.py -v
+
+RUN ["echo", "run ytsum.py tests"]
+RUN ANTHROPIC_API_KEY=1234 python -m unittest /app/test_ytsum.py -v
+
 CMD ["python", "app.py"]

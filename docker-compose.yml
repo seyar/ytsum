@@ -4,6 +4,8 @@ services:
   ytsum:
     build: .
     container_name: ytsum
+    ports:
+      - "5050:5050"
     env_file:
       - .env
     volumes:
