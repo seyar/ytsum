@@ -10,7 +10,7 @@ from youtube_url import clean_youtube_url, get_video_id
 
 app = Flask(__name__)
 
-# Create output directory if it doesn't exist
+# Create output directory if it doesn't exist python -m unittest test_app.py -v
 OUTPUT_DIR = Path("/app/out")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -22,7 +22,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 #     body: JSON.stringify({
 #         url: 'https://www.youtube.com/watch?v=VIDEO_ID',
 #         language: 'russian',
-#         podcast:,
+#         podcast: true,
 #         lumaai:
 #         runwayml:
 #         ignore-subs:
@@ -34,9 +34,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 jobs = defaultdict(dict)
 
-def start_background_task(cmd):
-    job_id = str(uuid4())
-
+def start_background_task(cmd, job_id):
     def run_task():
         try:
             result = subprocess.run(cmd, capture_output=True, text=True)
@@ -65,9 +63,38 @@ def start_background_task(cmd):
 
     return job_id
 
+def get_summary_text(url):
+    # Validate input
+    if not url or not isinstance(url, str):
+        return None
+
+    try:
+        # Extract video ID from the command
+        video_id = get_video_id(clean_youtube_url(url))
+        if not video_id:
+            return None
+
+        # Check if summary file exists
+        summary_file = OUTPUT_DIR / f"summary-{video_id}.txt"
+        if not summary_file.exists():
+            return None
+
+        # Read and validate file content
+        with open(summary_file, 'r', encoding='utf-8') as f:
+            summary_text = f.read().strip()
+            return summary_text if summary_text else None
+
+    except (OSError, IOError) as e:
+        print(f"Can not reading summary file: {e}", flush=True)
+        return None
+    except Exception as e:
+        print(f"Unexpected error in get_summary_text: {e}", flush=True)
+        return None
+
 # Update the status endpoint to use the jobs dictionary
 @app.route('/status/<job_id>', methods=['GET'])
 def check_status(job_id):
+    print(f"Check status for job={job_id}", flush=True)
     try:
         if job_id not in jobs:
             return jsonify({'error': 'Job not found'}), 404
@@ -87,7 +114,9 @@ def check_status(job_id):
 
         # Job completed
         result = job['result']
+        print(f"dict result is {result}")
         if "ERROR:" in result.stdout:
+            print(f"Processing failed. Maybe no cookie {result.stderr} {result.stdout}")
             return jsonify({
                 'error': 'Processing failed',
                 'details': {
@@ -98,25 +127,18 @@ def check_status(job_id):
                 }
             }), 500
 
-        # Extract video ID from the command
         url = job['cmd'][-1]  # Last argument is the URL
-        video_id = get_video_id(clean_youtube_url(url))
-
-        # Check if summary file exists
-        summary_file = OUTPUT_DIR / f"summary-{video_id}.txt"
-        summary_text = ""
-        if summary_file.exists():
-            with open(summary_file, 'r') as f:
-                summary_text = f.read()
+        summary_text = get_summary_text(url)
 
         return jsonify({
             'status': 'completed',
             'success': True,
             'text': summary_text,
-            'summary': result.stdout,
+            'stdout': result.stdout,
         })
 
     except Exception as e:
+        print(f"Error job={str(e)}", flush=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/process', methods=['POST'])
@@ -124,6 +146,7 @@ def process_video():
     try:
         data = request.get_json()
         url = data.get('url')
+        print(f"Process video url {url}", flush=True)
 
         if not url:
             return jsonify({'error': 'URL is required'}), 400
@@ -158,15 +181,24 @@ def process_video():
         cmd.append(url)
         print(f"Process cmd: {cmd}", flush=True)
 
-        job_id = start_background_task(cmd)
-
-        return jsonify({
-            'status': 'processing',
-            'job_id': job_id,
-            'check_status_url': f'/status/{job_id}'
-        })
+        job_id = str(uuid4())
+        summary_text = get_summary_text(url)
+        if summary_text is None:
+            start_background_task(cmd, job_id)
+            return jsonify({
+                'status': 'processing',
+                'job_id': job_id,
+                'check_status_url': f'/status/{job_id}'
+            })
+        else:
+            return jsonify({
+                'status': 'completed',
+                'job_id': job_id,
+                'text': summary_text
+            })
 
     except Exception as e:
+        print(f"Process cmd: {str(e)}", flush=True)
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
