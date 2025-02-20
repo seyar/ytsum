@@ -161,6 +161,17 @@ docker run -it ytsum
 docker compose run ytsum python ytsum.py --podcast --lumaai 'https://www.youtube.com/watch?v=VIDEO_ID'
 ```
 
+## Webserver
+
+```bash
+curl -v -X POST 'http://ytsum:5050/process'  -H "Content-Type: application/json"  -d '{"url": "https://www.youtube.com/watch?v=E6qJ1QYscEo", "language": "russian",    "podcast": true, "video_type": "lumaai"}'
+```
+
+```bash
+curl -v 'http://ytsum:5050/status/<job_id>'  -H "Content-Type: application/json"
+```
+
+
 ## Contributing
 
 1. Fork the repository
