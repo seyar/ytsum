@@ -2,6 +2,7 @@ name: Docker Image CI
 
 on:
   push:
+    branches-ignore: ["*"]
     tags:
       - v*
 
@@ -9,10 +10,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - name: Docker login
-      run: docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag ytsum:$(date +%s) --tag ytsum:latest
-    - name: docker push
-      run: docker push ghcr.io/seyar/ytsum:$(date +%s); docker push ghcr.io/seyar/ytsum:$(date +%s)
+      - uses: actions/checkout@v4
+      - name: Docker login
+        run: docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+      - name: Build the Docker image
+        run: docker build . --file Dockerfile --tag ytsum:$(date +%s) --tag ytsum:latest
+      - name: docker push
+        run: docker push ghcr.io/seyar/ytsum:$(date +%s); docker push ghcr.io/seyar/ytsum:$(date +%s)

@@ -1,13 +1,16 @@
 name: Pylint
 
-on: [push]
+on:
+  push:
+    branches: ["main"]
+    tags-ignore: ["*"]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.8", "3.9", "3.10"]
+        python-version: ["3.9"]
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
@@ -24,3 +27,4 @@ jobs:
     - name: Tests
       run: |
         python -m unittest /app/test_app.py -v
+        python -m unittest /app/test_ytsum.py -v
