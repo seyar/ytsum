@@ -26,5 +26,5 @@ jobs:
         pylint $(git ls-files '*.py')
     - name: Tests
       run: |
-        python -m unittest /app/test_app.py -v
-        python -m unittest /app/test_ytsum.py -v
+        python -m unittest test_app.py -v
+        python -m unittest test_ytsum.py -v
