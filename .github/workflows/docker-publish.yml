@@ -2,7 +2,6 @@ name: Docker Image CI
 
 on:
   push:
-    branches-ignore: ["*"]
     tags:
       - v*
 
@@ -30,7 +29,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.CI_REGISTRY_PASSWORD }}
 
-       # Extract metadata (tags, labels) for Docker
+        # Extract metadata (tags, labels) for Docker
       # https://github.com/docker/metadata-action
       - name: Extract Docker metadata
         id: meta
