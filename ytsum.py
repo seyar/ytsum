@@ -558,13 +558,7 @@ def get_video_metadata(url, language=None):
         if description := metadata.get('description'):
             # Process description with Ell
             processed = process_metadata_description(description, language)
-            # processed = description
             header_parts.append(f"{processed}")
-
-        # if tags := metadata.get('tags'):
-        #     # Process tags with Ell
-        #     processed_tags = process_metadata_description(' '.join(tags))
-        #     header_parts.append(f"Tags: {processed_tags}")
 
         header_parts.extend(["---", ""])
 
@@ -623,7 +617,7 @@ def process_metadata_description(metadata, language=None):
         5. Use semicolons to separate multiple plot points
         6. Group related tags inside parentheses
         7. Exclude generic/redundant tags
-        8. If it's a recipie of cooking include written ingridients and recipie itself"""
+        8. If it's a  cooking recipie include provided ingridients and recipie itself"""
 
         return f"""Process this video metadata into a concise format:
 1. Extract main plot points (max 3, separated by semicolons)
@@ -635,7 +629,7 @@ Metadata:
 Everything you write must be in {language}.
 
 Format output as:
-Description: [plot point 1]; [plot point 2]; [plot point 3]
+[plot point 1]; [plot point 2]; [plot point 3]
 Tags: [group1], [group2 (item1, item2)], [group3], [group4 (items...)]"""
 
     try:
@@ -1691,6 +1685,7 @@ def main():
 
         # Check for existing files
         summary_file = OUTPUT_DIR / f"summary-{video_id}.txt"
+        description_file = OUTPUT_DIR / f"description-{video_id}.txt"
         podcast_script_file = OUTPUT_DIR / f"podcast-{video_id}.txt"
         podcast_audio_file = OUTPUT_DIR / f"podcast-{video_id}.mp3"
         final_video_file = OUTPUT_DIR / f"video-{video_id}.mp4"
@@ -1699,6 +1694,13 @@ def main():
         try:
             lang = subtitle_language = args.language.lower() if args.language else "english"
             metadata = get_video_metadata(clean_url, lang)
+
+            # Save metadata to description file
+            if metadata:
+                description_file = OUTPUT_DIR / f"description-{video_id}.txt"
+                description_file.write_text(metadata)
+                print_success(f"Description saved to {description_file}")
+
             # Get video duration from metadata
             duration = None
             if metadata:

@@ -7,6 +7,8 @@ from uuid import uuid4
 import threading
 from collections import defaultdict
 from youtube_url import clean_youtube_url, get_video_id
+import re
+from pathlib import Path
 
 app = Flask(__name__)
 
@@ -31,6 +33,42 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 #         replicate:
 #     }),
 # }
+# Add after other imports
+
+
+def get_metadata_description(url):
+    """Extract metadata description from summary file if available"""
+    try:
+        video_id = get_video_id(clean_youtube_url(url))
+        description_file = OUTPUT_DIR / f"description-{video_id}.txt"
+
+        if not description_file.exists():
+            return None
+
+        with open(description_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        if content:
+            return content
+
+        return None
+    except Exception as e:
+        print(f"Error getting metadata: {e}", flush=True)
+        return None
+
+def get_podcast_audio(url):
+    """Get podcast audio file path if available"""
+    try:
+        video_id = get_video_id(clean_youtube_url(url))
+        audio_file = OUTPUT_DIR / f"podcast-{video_id}.mp3"
+
+        if audio_file.exists():
+            return str(audio_file)
+
+        return None
+    except Exception as e:
+        print(f"Error getting audio file: {e}", flush=True)
+        return None
 
 jobs = defaultdict(dict)
 
@@ -91,6 +129,15 @@ def get_summary_text(url):
         print(f"Unexpected error in get_summary_text: {e}", flush=True)
         return None
 
+# {
+#     "status": "processing",
+#     "metadata": "...",  // Optional, included if available
+#     "audio_file": "...", // Optional, included if available
+#     // When completed:
+#     "success": true,
+#     "text": "...",
+#     "stdout": "..."
+#     }
 # Update the status endpoint to use the jobs dictionary
 @app.route('/status/<job_id>', methods=['GET'])
 def check_status(job_id):
@@ -107,35 +154,43 @@ def check_status(job_id):
                 'error': job['error']
             }), 500
 
-        if job['status'] == 'processing':
-            return jsonify({
-                'status': 'processing'
-            })
-
-        # Job completed
-        result = job['result']
-        print(f"dict result is {result}")
-        if "ERROR:" in result.stdout:
-            print(f"Processing failed. Maybe no cookie {result.stderr} {result.stdout}")
-            return jsonify({
-                'error': 'Processing failed',
-                'details': {
-                    'return_code': result.returncode,
-                    'stdout': result.stdout,
-                    'stderr': result.stderr,
-                    'command': ' '.join(job['cmd'])
-                }
-            }), 500
-
         url = job['cmd'][-1]  # Last argument is the URL
-        summary_text = get_summary_text(url)
+        response = {'status': 'processing'}
 
-        return jsonify({
-            'status': 'completed',
-            'success': True,
-            'text': summary_text,
-            'stdout': result.stdout,
-        })
+        # Check for metadata first
+        metadata = get_metadata_description(url)
+        if metadata:
+            response['metadata'] = metadata
+
+        # Check for audio file next
+        audio_file = get_podcast_audio(url)
+        if audio_file:
+            response['audio_file'] = audio_file
+
+        # Check for final summary
+        if job['status'] == 'completed':
+            result = job['result']
+
+            if "ERROR:" in result.stdout:
+                print(f"Processing failed. Maybe no cookie {result.stderr} {result.stdout}")
+                return jsonify({
+                    'error': 'Processing failed',
+                    'details': {
+                        'return_code': result.returncode,
+                        'stdout': result.stdout,
+                        'stderr': result.stderr,
+                        'command': ' '.join(job['cmd'])
+                    }
+                }), 500
+
+            summary_text = get_summary_text(url)
+            if summary_text:
+                response['status'] = 'completed'
+                response['success'] = True
+                response['text'] = summary_text
+                response['stdout'] = result.stdout
+
+        return jsonify(response)
 
     except Exception as e:
         print(f"Error job={str(e)}", flush=True)
