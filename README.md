@@ -47,6 +47,15 @@ RUNWAYML_API_SECRET=your_runwayml_api_key
 REPLICATE_API_TOKEN=your_replicate_api_key
 ```
 
+## Release
+```
+git tag -m "v0.0.6" v0.0.6
+git push --follow-tags origin main
+```
+
+## Image
+https://ghcr.io/seyar/ytsum
+
 ## Usage
 
 ### Basic Summary
