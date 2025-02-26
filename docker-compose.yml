@@ -1,14 +1,14 @@
-
 services:
   ytsum:
-    build: .
+    image: ghcr.io/seyar/ytsum:latest
+    # build: .
     container_name: ytsum
     ports:
       - "5050:5050"
     env_file:
       - .env
     volumes:
-      - ./data:/app/data  # Optional: for persistent data storage
+      - ./data:/app/data # Optional: for persistent data storage
       - ./out:/app/out
     restart: unless-stopped
     networks:
