@@ -75,7 +75,16 @@ jobs = defaultdict(dict)
 def start_background_task(cmd, job_id):
     def run_task():
         try:
+            error_text = "ERROR:"
             result = subprocess.run(cmd, capture_output=True, text=True)
+            if error_text in result.stdout or error_text in result.stderr:
+                jobs[job_id] = {
+                    'status': 'failed',
+                    'result': result.stdout,
+                    'error': str(e),
+                    'cmd': cmd
+                }
+
             jobs[job_id] = {
                 'status': 'completed',
                 'result': result,
