@@ -168,9 +168,9 @@ def check_status(job_id):
             response['metadata'] = metadata
 
         # Check for audio file next
-        audio_file = get_podcast_audio(url)
-        if audio_file:
-            response['audio_file'] = audio_file
+        # audio_file = get_podcast_audio(url)
+        # if audio_file:
+        #     response['audio_file'] = audio_file
 
         # Check for final summary
         if job['status'] == 'completed':
