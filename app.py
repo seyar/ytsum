@@ -58,17 +58,13 @@ def get_metadata_description(url):
 
 def get_podcast_audio(url):
     """Get podcast audio file path if available"""
-    try:
-        video_id = get_video_id(clean_youtube_url(url))
-        audio_file = OUTPUT_DIR / f"podcast-{video_id}.mp3"
+    video_id = get_video_id(clean_youtube_url(url))
+    audio_file = OUTPUT_DIR / f"podcast-{video_id}.mp3"
 
-        if audio_file.exists():
-            return str(audio_file)
+    if audio_file.exists():
+        return str(audio_file)
 
-        return None
-    except Exception as e:
-        print(f"Error getting audio file: {e}", flush=True)
-        return None
+    return None
 
 jobs = defaultdict(dict)
 
