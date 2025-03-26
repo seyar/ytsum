@@ -69,40 +69,53 @@ def get_podcast_audio(url):
 jobs = defaultdict(dict)
 
 def start_background_task(cmd, job_id):
-    def run_task():
-        try:
-            error_text = "ERROR:"
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if error_text in result.stdout or error_text in result.stderr:
+    # First check if command has errors before starting thread
+    try:
+        # Run command synchronously first to check for errors
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        error_text = "ERROR:"
+        print(f"resutl={job_id} {result.stderr}", flush=True)
+        if error_text in result.stdout or error_text in result.stderr:
+            jobs[job_id] = {
+                'status': 'failed',
+                'result': result.stdout,
+                'error': result.stderr,
+                'cmd': cmd
+            }
+            raise Exception(result.stderr or result.stdout)
+
+        # If no errors, start the background thread
+        def run_task():
+            try:
+                jobs[job_id] = {
+                    'status': 'completed',
+                    'result': result,
+                    'cmd': cmd
+                }
+            except Exception as e:
                 jobs[job_id] = {
                     'status': 'failed',
-                    'result': result.stdout,
                     'error': str(e),
                     'cmd': cmd
                 }
 
-            jobs[job_id] = {
-                'status': 'completed',
-                'result': result,
-                'cmd': cmd
-            }
-        except Exception as e:
-            jobs[job_id] = {
-                'status': 'failed',
-                'error': str(e),
-                'cmd': cmd
-            }
+        # Store initial job status
+        jobs[job_id] = {
+            'status': 'processing',
+            'cmd': cmd
+        }
 
-    # Store initial job status
-    jobs[job_id] = {
-        'status': 'processing',
-        'cmd': cmd
-    }
+        # Start the background thread only if no errors
+        thread = threading.Thread(target=run_task)
+        thread.daemon = True
+        thread.start()
 
-    # Start the background thread
-    thread = threading.Thread(target=run_task)
-    thread.daemon = True
-    thread.start()
+    except Exception as e:
+        jobs[job_id] = {
+            'status': 'failed',
+            'error': str(e),
+            'cmd': cmd
+        }
 
     return job_id
 
@@ -128,11 +141,13 @@ def get_summary_text(url):
             return summary_text if summary_text else None
 
     except (OSError, IOError) as e:
-        print(f"Can not reading summary file: {e}", flush=True)
-        return None
+        msg = f"Can not reading summary file: {e}"
+        print(msg, flush=True)
+        return Exception(msg)
     except Exception as e:
-        print(f"Unexpected error in get_summary_text: {e}", flush=True)
-        return None
+        msg = f"Unexpected error in get_summary_text: {e}"
+        print(msg, flush=True)
+        return Exception(msg)
 
 # {
 #     "status": "processing",
@@ -250,6 +265,8 @@ def process_video():
                 'job_id': job_id,
                 'check_status_url': f'/status/{job_id}'
             })
+        if isinstance(summary_text, Exception):
+            raise summary_text
         else:
             return jsonify({
                 'status': 'completed',
@@ -259,7 +276,11 @@ def process_video():
 
     except Exception as e:
         print(f"Process cmd: {str(e)}", flush=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'status': 'failed',
+            'job_id': job_id,
+            'error': str(e)
+        }), 500
 
 if __name__ == '__main__':
   app.run(host='0.0.0.0', port=os.getenv("PORT"), debug=True)

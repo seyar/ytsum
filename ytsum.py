@@ -79,6 +79,7 @@ if runway_api_key:
 else:
     runway_client = None
 
+DATA_DIR = Path("/app/data")
 # Add after OpenAI client initialization
 # Create output directory if it doesn't exist
 OUTPUT_DIR = Path("/app/out")
@@ -168,7 +169,7 @@ def download_video(url, output_path):
             '--output', output_path,
             '--format', 'ba[ext=m4a]',
             '--extract-audio',
-            '--cookies', '/app/data/www.youtube.com_cookies.txt',
+            '--cookies', get_cookie_path(),
             '--force-overwrites',
             clean_url
         ], check=True)
@@ -522,6 +523,21 @@ def summarize_with_claude(transcript, metadata="", language="english"):
         print_error(f"Error generating summary: {e}")
         return None
 
+def get_cookie_path():
+    try:
+        cookie_file = DATA_DIR / "/www.youtube.com_cookies.txt"
+        # Check if we need to generate summary
+        if cookie_file.exists():
+            cookie = cookie_file.read_text()
+            if (cookie == '' or cookie == None):
+                raise Exception("Cookie file is empty")
+            else:
+                return DATA_DIR / "/www.youtube.com_cookies.txt"
+        else:
+            raise Exception("Cookie file not exists")
+    except Exception as e:
+            print_error(f"ERROR: {e}")
+
 def get_video_metadata(url, language=None):
     """Get video metadata using yt-dlp"""
     try:
@@ -531,7 +547,7 @@ def get_video_metadata(url, language=None):
         result = subprocess.run([
             'yt-dlp',
             '--dump-json',
-            '--cookies', '/app/data/www.youtube.com_cookies.txt',
+            '--cookies', get_cookie_path(),
             '--no-playlist',
             clean_url
         ], check=True, capture_output=True, text=True)
